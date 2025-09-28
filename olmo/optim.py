@@ -19,6 +19,7 @@ __all__ = [
     "Optimizer",
     "LionW",
     "AdamW",
+    "SGD",
     "Scheduler",
     "CosWithWarmup",
     "LinearWithWarmup",
@@ -660,7 +661,7 @@ class SGD(torch.optim.SGD, Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None) -> None:
-         if not (self._record_update_metrics and self._collecting_metrics):
+         if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
             return super().step(closure=closure)
 
         param_names = []
@@ -1041,6 +1042,13 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             record_update_metrics=cfg.optimizer.record_update_metrics,
             selective_updates=cfg.optimizer.selective_updates,
             eps=cfg.optimizer.eps,
+        )
+    elif cfg.optimizer.name == OptimizerType.sgd:
+        return SGD(
+            param_groups,
+            lr=cfg.optimizer.learning_rate,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
         )
     else:
         raise NotImplementedError
