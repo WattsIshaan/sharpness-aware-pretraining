@@ -19,6 +19,7 @@ __all__ = [
     "Optimizer",
     "LionW",
     "AdamW",
+    "SGD",
     "Scheduler",
     "CosWithWarmup",
     "LinearWithWarmup",
@@ -646,6 +647,87 @@ class AdamW(torch.optim.AdamW, Optimizer):
             self._step_size_maxs = None
             return metrics
 
+class SGD(torch.optim.SGD, Optimizer):
+    def __init__(self, *args, record_update_metrics: bool = False, selective_updates: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._record_update_metrics = record_update_metrics
+        self._collecting_metrics = False
+
+        # Buffers for metrics
+        self._step_size_param_names: Optional[List[str]] = None
+        self._step_size_norms: Optional[List[torch.Tensor]] = None
+        self._step_size_maxs: Optional[List[torch.Tensor]] = None
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+         if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
+            return super().step(closure=closure)
+
+        param_names = []
+        step_size_norms = []
+        step_size_maxs = []
+
+        for group in self.param_groups:
+            lr = group["lr"]
+
+            for name, param in zip(group.get("param_names", []), group["params"]):
+                param_names.append(name)
+                grad = param.grad
+                if grad is None:
+                    step_size_norms.append(torch.tensor([0.0], device=param.device))
+                    step_size_maxs.append(torch.tensor([0.0], device=param.device))
+                    continue
+
+                update = -lr * grad
+                param.add_(update)
+
+                step_size_norms.append(torch.linalg.vector_norm(update, 2.0, dtype=torch.float32).unsqueeze(0))
+                step_size_maxs.append(update.abs().max().unsqueeze(0))
+
+        self._step_size_param_names = param_names
+        self._step_size_norms = step_size_norms
+        self._step_size_maxs = step_size_maxs
+
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        if not (self._record_update_metrics and self._collecting_metrics):
+            return {}
+        else:
+            device = get_default_device()
+            dst_rank = 0
+            if process_group is not None:
+                dst_rank = dist.get_global_rank(process_group, 0)
+            param_names = self._step_size_param_names
+            step_size_norms = self._step_size_norms
+            step_size_maxs = self._step_size_maxs
+            assert param_names is not None
+            assert step_size_norms is not None
+            assert step_size_maxs is not None
+
+            # Reduce metrics if needed.
+            if is_distributed() and isinstance(module, FullyShardedDataParallel):
+                # Reduce norms.
+                all_norms = torch.cat(step_size_norms).to(device) ** 2.0
+                dist.reduce(all_norms, dst_rank, op=dist.ReduceOp.SUM, group=process_group)
+                step_size_norms = (all_norms ** (0.5)).squeeze(0).split(1)
+
+                # Reduce maxs.
+                all_maxs = torch.cat(step_size_maxs).to(device)
+                dist.reduce(all_maxs, dst_rank, op=dist.ReduceOp.MAX, group=process_group)
+                step_size_maxs = all_maxs.split(1)
+
+            metrics = {}
+            for param_name, step_size_norm, step_size_max in zip(param_names, step_size_norms, step_size_maxs):  # type: ignore[arg-type]
+                metrics[f"step/{param_name}.norm"] = step_size_norm.squeeze(0)
+                metrics[f"step/{param_name}.max"] = step_size_max.squeeze(0)
+
+            self._step_size_param_names = None
+            self._step_size_norms = None
+            self._step_size_maxs = None
+            return metrics
+
 
 @dataclass
 class Scheduler(metaclass=ABCMeta):
@@ -960,6 +1042,13 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             record_update_metrics=cfg.optimizer.record_update_metrics,
             selective_updates=cfg.optimizer.selective_updates,
             eps=cfg.optimizer.eps,
+        )
+    elif cfg.optimizer.name == OptimizerType.sgd:
+        return SGD(
+            param_groups,
+            lr=cfg.optimizer.learning_rate,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
         )
     else:
         raise NotImplementedError
