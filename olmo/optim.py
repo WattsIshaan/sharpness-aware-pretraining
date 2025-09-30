@@ -661,7 +661,7 @@ class SGD(torch.optim.SGD, Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None) -> None:
-         if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
+        if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
             return super().step(closure=closure)
 
         param_names = []
