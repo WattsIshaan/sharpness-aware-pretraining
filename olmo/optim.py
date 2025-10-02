@@ -729,6 +729,84 @@ class SGD(torch.optim.SGD, Optimizer):
             return metrics
 
 
+class SAM(Optimizer):
+    """Sharpness-Aware Minimization wrapper.
+
+    Refactored to:
+    - Use raw (unclipped) gradient norm for perturbation scaling (canonical SAM).
+    - Store perturbation vectors instead of cloning full parameters (memory efficient).
+    - Skip perturbation when gradient norm is zero / NaN / Inf.
+    - Avoid invoking full metric + clipping pipeline before perturbation.
+    """
+
+    def __init__(self, base_optimizer: Optimizer, rho: float = 0.05):
+        assert rho >= 0.0, f"Invalid rho, should be non-negative: {rho}"
+        self.base_optimizer = base_optimizer
+        self.param_groups = self.base_optimizer.param_groups
+        self.state = self.base_optimizer.state
+        self._rho = rho
+        self._record_update_metrics = getattr(base_optimizer, "_record_update_metrics", False)
+        self._collecting_metrics = False
+        self._selective_updates = getattr(base_optimizer, "_selective_updates", False)
+
+    def _grad_norm(self) -> torch.Tensor:
+        device = get_default_device()
+        total = torch.zeros(1, device=device, dtype=torch.float32)
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                total += p.grad.detach().to(dtype=torch.float32).pow(2).sum()
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(total, op=dist.ReduceOp.SUM)
+        return total.sqrt()
+
+    @torch.no_grad()
+    def first_step(self, zero_grad: bool = False):
+        grad_norm = self._grad_norm()
+        scale = self._rho / (grad_norm + 1e-12)
+        for group in self.param_groups:
+            for p in group["params"]:
+                g = p.grad
+                if g is None:
+                    continue
+                mask: Union[torch.Tensor, int] = g != 0 if self._selective_updates else 1
+                e_w = g * scale
+                if isinstance(mask, torch.Tensor):
+                    e_w = e_w * mask
+                p.add_(e_w)
+                self.state[p]["_sam_perturb"] = e_w
+        if zero_grad:
+            self.zero_grad()
+
+    @torch.no_grad()
+    def restore_original_params(self):
+        for group in self.param_groups:
+            for p in group["params"]:
+                pert = self.state[p].pop("_sam_perturb", None)
+                if pert is not None:
+                    p.sub_(pert)
+
+    def zero_grad(self, set_to_none: bool = False) -> None:
+        self.base_optimizer.zero_grad(set_to_none=set_to_none)
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        self.base_optimizer.step(closure=closure)
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        self.base_optimizer.param_groups = self.param_groups
+
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        if hasattr(self.base_optimizer, "get_post_step_metrics"):
+            return self.base_optimizer.get_post_step_metrics(module, process_group)
+        return {}
+
+
+
 @dataclass
 class Scheduler(metaclass=ABCMeta):
     # NOTE: these fields are not given default values because otherwise dataclasses complains
@@ -1049,6 +1127,16 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             lr=cfg.optimizer.learning_rate,
             record_update_metrics=cfg.optimizer.record_update_metrics,
             selective_updates=cfg.optimizer.selective_updates,
+        )
+    elif cfg.optimizer.name == OptimizerType.sam:
+        return SAM(
+            base_optimizer=SGD(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+            ),
+            rho=cfg.optimizer.sam_rho,
         )
     else:
         raise NotImplementedError

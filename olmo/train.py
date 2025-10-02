@@ -44,7 +44,7 @@ from .data import IterableDataset
 from .eval import Evaluator
 from .exceptions import OLMoConfigurationError
 from .model import OLMo
-from .optim import Optimizer, Scheduler
+from .optim import SAM, Optimizer, Scheduler
 from .torch_util import (
     SingleAccelerator,
     barrier,
@@ -779,7 +779,7 @@ class Trainer:
 
         return loss, ce_loss, z_loss
 
-    def train_batch(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def train_batch(self, batch: Dict[str, Any], is_sam: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # Split into micro-batches.
         micro_batches = self.split_batch(batch)
         batch_size_in_tokens = batch["input_ids"].numel()
@@ -799,7 +799,7 @@ class Trainer:
                 and self.cfg.ddp is not None
                 and self.cfg.ddp.grad_sync_mode == DDPGradSyncMode.batch
             ):
-                if micro_batch_idx != num_micro_batches - 1:
+                if micro_batch_idx != num_micro_batches - 1 or is_sam:
                     grad_sync_context = self.dist_model.no_sync
 
             # Register output hooks
@@ -849,6 +849,12 @@ class Trainer:
 
         # Run forward-backward pass.
         ce_batch_loss, z_batch_loss = self.train_batch(batch)
+
+        if self.cfg.optimizer == "sam":
+            assert isinstance(self.optim, SAM)
+            self.optim.first_step(zero_grad=True)
+            ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=True)
+            self.optim.restore_original_params()
 
         # Collect loss, potentially reducing over all ranks.
         if reduce_global_loss:

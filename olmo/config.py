@@ -500,6 +500,7 @@ class OptimizerType(StrEnum):
     lionw = "lionw"
     adamw = "adamw"
     sgd = "sgd"
+    sam = "sam"
 
 
 @dataclass
@@ -509,6 +510,7 @@ class OptimizerConfig(BaseConfig):
     weight_decay: float = 0.01
     betas: Tuple[float, float] = (0.9, 0.95)
     eps: float = 1e-5
+    sam_rho: float = 0.05
 
     no_decay_norm_and_bias: Optional[bool] = None
     """
