@@ -745,9 +745,6 @@ class SAM(Optimizer):
         self.param_groups = self.base_optimizer.param_groups
         self.state = self.base_optimizer.state
         self._rho = rho
-        self._record_update_metrics = getattr(base_optimizer, "_record_update_metrics", False)
-        self._collecting_metrics = False
-        self._selective_updates = getattr(base_optimizer, "_selective_updates", False)
 
     def _grad_norm(self) -> torch.Tensor:
         device = get_default_device()
@@ -757,35 +754,32 @@ class SAM(Optimizer):
                 if p.grad is None:
                     continue
                 total += p.grad.detach().to(dtype=torch.float32).pow(2).sum()
-        if dist.is_available() and dist.is_initialized():
-            dist.all_reduce(total, op=dist.ReduceOp.SUM)
         return total.sqrt()
 
     @torch.no_grad()
     def first_step(self, zero_grad: bool = False):
         grad_norm = self._grad_norm()
+        if not torch.isfinite(grad_norm):
+            return
         scale = self._rho / (grad_norm + 1e-12)
         for group in self.param_groups:
-            for p in group["params"]:
-                g = p.grad
-                if g is None:
+            for param in group["params"]:
+                grad = param.grad
+                if grad is None:
                     continue
-                mask: Union[torch.Tensor, int] = g != 0 if self._selective_updates else 1
-                e_w = g * scale
-                if isinstance(mask, torch.Tensor):
-                    e_w = e_w * mask
-                p.add_(e_w)
-                self.state[p]["_sam_perturb"] = e_w
+                e_w = grad * scale
+                param.add_(e_w)
+                self.state[param]["_sam_perturb"] = e_w
         if zero_grad:
             self.zero_grad()
 
     @torch.no_grad()
     def restore_original_params(self):
         for group in self.param_groups:
-            for p in group["params"]:
-                pert = self.state[p].pop("_sam_perturb", None)
+            for param in group["params"]:
+                pert = self.state[param].pop("_sam_perturb", None)
                 if pert is not None:
-                    p.sub_(pert)
+                    param.sub_(pert) # subtract perturbation if there is one
 
     def zero_grad(self, set_to_none: bool = False) -> None:
         self.base_optimizer.zero_grad(set_to_none=set_to_none)

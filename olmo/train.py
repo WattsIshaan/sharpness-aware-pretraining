@@ -44,7 +44,7 @@ from .data import IterableDataset
 from .eval import Evaluator
 from .exceptions import OLMoConfigurationError
 from .model import OLMo
-from .optim import SAM, Optimizer, Scheduler
+from .optim import Optimizer, Scheduler, SAM
 from .torch_util import (
     SingleAccelerator,
     barrier,
@@ -848,12 +848,11 @@ class Trainer:
         batch = move_to_device(batch, self.device)
 
         # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss = self.train_batch(batch)
+        ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=isinstance(self.optim, SAM))
 
-        if self.cfg.optimizer == "sam":
-            assert isinstance(self.optim, SAM)
+        if isinstance(self.optim, SAM):
             self.optim.first_step(zero_grad=True)
-            ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=True)
+            ce_batch_loss, z_batch_loss = self.train_batch(batch)
             self.optim.restore_original_params()
 
         # Collect loss, potentially reducing over all ranks.
