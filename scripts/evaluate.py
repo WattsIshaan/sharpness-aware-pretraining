@@ -63,7 +63,7 @@ def main():
     parser = argparse.ArgumentParser(description='Evaluate OLMo model on tokenized data')
     parser.add_argument('--model_path', type=str, required=True, help='Path to model checkpoint')
     parser.add_argument('--device', type=str, default='cpu', help='Device to run on (e.g., cpu, cuda, cuda:0)')
-    parser.add_argument('--data_path', type=str, nargs='+', required=True, help='Paths to data files (uint16 format)')
+    parser.add_argument('--data_path', type=str, required=True, help='Comma-separated paths to data files (uint16 format)')
     parser.add_argument('--chunk_size', type=int, required=True, help='Size of chunks to process')
     parser.add_argument('--output_path', type=str, required=True, help='Path to output JSON file')
     
@@ -78,9 +78,12 @@ def main():
     model = OLMo.from_checkpoint(args.model_path, device=args.device)
     model.eval()
     
+    # Parse comma-separated data paths
+    data_paths = [p.strip() for p in args.data_path.split(',') if p.strip()]
+
     # Evaluate on each data file
     results = {}
-    for data_path in args.data_path:
+    for data_path in data_paths:
         log.info(f"Evaluating on {data_path}")
         loss = evaluate_file(model, data_path, args.chunk_size, device)
         

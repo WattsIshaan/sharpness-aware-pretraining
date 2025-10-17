@@ -3,7 +3,7 @@
 from experiments import SlurmExecutor
 
 from launch.globals import PROJECT_NAME, LOCAL_DATA_PATH, CODE_PATH
-from launch.pretrain import sam_pretrained_models, sgd_pretrained_models
+from launch.pretrain import sam_pretrained_models, sgd_pretrained_models, sam_model_evaluations, sgd_model_evaluations
 
 
 # Setup command for the executor
@@ -29,6 +29,17 @@ executor.stage(
 executor.stage(
     'sgd_pretrain',
     sgd_pretrained_models,
+)
+
+# Add evaluation stages
+executor.stage(
+    'sam_eval',
+    sam_model_evaluations,
+)
+
+executor.stage(
+    'sgd_eval',
+    sgd_model_evaluations,
 )
 
 if __name__ == '__main__':
