@@ -444,7 +444,7 @@ class Trainer:
                 log.warning("MPS is available, but no RNG state was provided.")
 
     def _save_checkpoint(
-        self, checkpointer: Checkpointer, checkpoint_type: CheckpointType
+        self, checkpointer: Checkpointer, checkpoint_type: CheckpointType, is_final: bool = False
     ) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         if checkpoint_type == CheckpointType.sharded:
             suffix = ""
@@ -472,7 +472,8 @@ class Trainer:
         if self.indices_file is not None:
             self.indices_file.flush()
 
-        checkpoint_dir = Path(self.cfg.save_folder) / f"step{self.global_step}{suffix}"
+        checkpoint_name = f"final{suffix}" if is_final else f"step{self.global_step}{suffix}"
+        checkpoint_dir = Path(self.cfg.save_folder) / checkpoint_name
         remote_checkpoint_dir: Optional[str] = None
         if self.cfg.remote_save_folder is not None:
             remote_checkpoint_dir = f"{self.cfg.remote_save_folder.rstrip('/')}/{checkpoint_dir.name}"
@@ -518,15 +519,15 @@ class Trainer:
         else:
             return checkpoint_dir, None
 
-    def save_sharded_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_sharded_checkpoint(self, is_final: bool = False) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         checkpointer = build_sharded_checkpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.sharded)
+        result = self._save_checkpoint(checkpointer, CheckpointType.sharded, is_final=is_final)
         self.last_sharded_checkpoint_step = self.global_step
         return result
 
-    def save_ephemeral_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_ephemeral_checkpoint(self, is_final: bool = False) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         checkpointer = build_sharded_checkpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.sharded_ephemeral)
+        result = self._save_checkpoint(checkpointer, CheckpointType.sharded_ephemeral, is_final=is_final)
         self.last_sharded_checkpoint_step = self.global_step
         return result
 
@@ -569,9 +570,9 @@ class Trainer:
             self.load_trainer_state_dict(trainer_state)
         barrier()
 
-    def save_unsharded_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_unsharded_checkpoint(self, is_final: bool = False) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         checkpointer = FullCheckpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.unsharded)
+        result = self._save_checkpoint(checkpointer, CheckpointType.unsharded, is_final=is_final)
         self.last_unsharded_checkpoint_step = self.global_step
         return result
 
@@ -608,15 +609,15 @@ class Trainer:
         barrier()
 
     def save_checkpoint(
-        self, checkpoint_type: CheckpointType = CheckpointType.sharded
+        self, checkpoint_type: CheckpointType = CheckpointType.sharded, is_final: bool = False
     ) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         result: Tuple[PathOrStr, Optional[PathOrStr]]
         if checkpoint_type == CheckpointType.sharded:
-            result = self.save_sharded_checkpoint()
+            result = self.save_sharded_checkpoint(is_final=is_final)
         elif checkpoint_type == CheckpointType.unsharded:
-            result = self.save_unsharded_checkpoint()
+            result = self.save_unsharded_checkpoint(is_final=is_final)
         elif checkpoint_type == CheckpointType.sharded_ephemeral:
-            result = self.save_ephemeral_checkpoint()
+            result = self.save_ephemeral_checkpoint(is_final=is_final)
         else:
             raise NotImplementedError(checkpoint_type)
 
@@ -1379,7 +1380,7 @@ class Trainer:
                 and self.last_unsharded_checkpoint_step != self.global_step
             ):
                 log.info("Saving final unsharded model checkpoint...")
-                checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
+                checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded, is_final=True)
                 log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
             elif (
                 self.cfg.save_num_checkpoints_to_keep != 0
@@ -1387,7 +1388,7 @@ class Trainer:
                 and self.cfg.distributed_strategy == DistributedStrategy.fsdp
             ):
                 log.info("Saving final checkpoint...")
-                checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded)
+                checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded, is_final=True)
                 log.info(f"Checkpoint saved to {checkpoint_path}")
 
     def close(self, exit_code: int = 0) -> None:
