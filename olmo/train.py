@@ -57,7 +57,7 @@ from .torch_util import (
     synchronize_flag,
     synchronize_value,
 )
-from .util import upload
+from .util import upload, run_sync_cmd
 
 __all__ = ["SpeedMonitor", "LRMonitor", "Trainer"]
 
@@ -849,10 +849,12 @@ class Trainer:
 
         # Run forward-backward pass.
         ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=isinstance(self.optim, SAM))
+        print(f"CE Batch Loss before SAM step: {ce_batch_loss.item()}")
 
         if isinstance(self.optim, SAM):
             self.optim.first_step(zero_grad=True)
             ce_batch_loss, z_batch_loss = self.train_batch(batch)
+            print(f"CE Batch Loss after SAM step: {ce_batch_loss.item()}")
             self.optim.restore_original_params()
 
         # Collect loss, potentially reducing over all ranks.
@@ -1281,6 +1283,10 @@ class Trainer:
                             while self.ephemeral_checkpoints:
                                 self.remove_ephemeral_checkpoint()
 
+                            if self.cfg.run_sync_cmd:
+                                log.info("Running SYNC_CMD...")
+                                run_sync_cmd()
+
                             # Reset speed monitor so that we don't count the time taken to save checkpoints.
                             speed_monitor.reset()
 
@@ -1309,6 +1315,10 @@ class Trainer:
                         log.info("Saving unsharded checkpoint...")
                         checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
                         log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
+
+                        if self.cfg.run_sync_cmd:
+                            log.info("Running SYNC_CMD...")
+                            run_sync_cmd()
 
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()

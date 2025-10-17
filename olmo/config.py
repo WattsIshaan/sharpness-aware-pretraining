@@ -511,6 +511,7 @@ class OptimizerConfig(BaseConfig):
     betas: Tuple[float, float] = (0.9, 0.95)
     eps: float = 1e-5
     sam_rho: float = 0.05
+    momentum: float = 0.9
 
     no_decay_norm_and_bias: Optional[bool] = None
     """
@@ -701,6 +702,8 @@ class WandbConfig(BaseConfig):
     log_artifacts: bool = False
     rank_zero_only: bool = True
     log_interval: int = 1
+    id: Optional[str] = None
+    resume: Optional[str] = None
 
 
 @dataclass
@@ -1085,6 +1088,11 @@ class TrainConfig(BaseConfig):
     no_pre_train_checkpoint: bool = False
     """
     Skip saving pre-train checkpoint.
+    """
+
+    run_sync_cmd: Optional[bool] = False
+    """
+    If ``True``, run the SYNC_CMD environment variable as a shell command.
     """
 
     load_path: Optional[str] = None

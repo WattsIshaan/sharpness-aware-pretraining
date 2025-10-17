@@ -73,7 +73,7 @@ olmo_data = ["**"]
 version = { attr = "olmo.version.VERSION" }
 
 [tool.setuptools.packages.find]
-include = ["olmo*", "hf_olmo*", "olmo_data*"]
+include = ["olmo*", "hf_olmo*", "olmo_data*", "launch*"]
 exclude = [
     "*.tests",
     "*.tests.*",

@@ -670,6 +670,7 @@ class SGD(torch.optim.SGD, Optimizer):
 
         for group in self.param_groups:
             lr = group["lr"]
+            weight_decay = group["weight_decay"]
 
             for name, param in zip(group.get("param_names", []), group["params"]):
                 param_names.append(name)
@@ -679,9 +680,26 @@ class SGD(torch.optim.SGD, Optimizer):
                     step_size_maxs.append(torch.tensor([0.0], device=param.device))
                     continue
 
-                update = -lr * grad
-                param.add_(update)
+                # Perform step weight decay.
+                if self._selective_updates:
+                    mask: Union[torch.Tensor, int] = grad != 0
+                else:
+                    mask = 1
 
+                # Apply weight decay only to selected elements if selective_updates is enabled
+                if isinstance(mask, torch.Tensor):
+                    # Only decay weights where mask is True
+                    param.mul_(1 - mask * (lr * weight_decay))
+                else:
+                    param.mul_(1 - lr * weight_decay)
+
+                update = -lr * grad
+
+                if isinstance(mask, torch.Tensor):
+                    # Only update selected elements
+                    update = update * mask
+
+                param.add_(update)
                 step_size_norms.append(torch.linalg.vector_norm(update, 2.0, dtype=torch.float32).unsqueeze(0))
                 step_size_maxs.append(update.abs().max().unsqueeze(0))
 
@@ -741,6 +759,18 @@ class SAM(Optimizer):
 
     def __init__(self, base_optimizer: Optimizer, rho: float = 0.05):
         assert rho >= 0.0, f"Invalid rho, should be non-negative: {rho}"
+
+        # Initialize parent Optimizer to set up optimizer hook dictionaries used by
+        # state_dict()/load_state_dict() (e.g., _optimizer_state_dict_pre_hooks).
+        # We pass an empty defaults dict since SAM delegates stepping to base_optimizer.
+        super().__init__(
+            base_optimizer.param_groups,
+            {},
+            record_update_metrics=getattr(base_optimizer, "_record_update_metrics", False),
+            selective_updates=getattr(base_optimizer, "_selective_updates", False),
+        )
+
+        # Re-attach the wrapped optimizer so both share the same references.
         self.base_optimizer = base_optimizer
         self.param_groups = self.base_optimizer.param_groups
         self.state = self.base_optimizer.state
@@ -758,7 +788,9 @@ class SAM(Optimizer):
 
     @torch.no_grad()
     def first_step(self, zero_grad: bool = False):
+        print("SAM 1st Step")
         grad_norm = self._grad_norm()
+        print(f"SAM 1st Step Grad Norm: {grad_norm}")
         if not torch.isfinite(grad_norm):
             return
         scale = self._rho / (grad_norm + 1e-12)
@@ -775,6 +807,7 @@ class SAM(Optimizer):
 
     @torch.no_grad()
     def restore_original_params(self):
+        print("SAM Restore Original Params")
         for group in self.param_groups:
             for param in group["params"]:
                 pert = self.state[param].pop("_sam_perturb", None)
@@ -786,6 +819,7 @@ class SAM(Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None) -> None:
+        print("SAM 2nd Step")
         self.base_optimizer.step(closure=closure)
 
     def load_state_dict(self, state_dict):
@@ -1119,6 +1153,8 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
         return SGD(
             param_groups,
             lr=cfg.optimizer.learning_rate,
+            weight_decay=cfg.optimizer.weight_decay,
+            momentum=cfg.optimizer.momentum,
             record_update_metrics=cfg.optimizer.record_update_metrics,
             selective_updates=cfg.optimizer.selective_updates,
         )
@@ -1127,6 +1163,8 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             base_optimizer=SGD(
                 param_groups,
                 lr=cfg.optimizer.learning_rate,
+                momentum=cfg.optimizer.momentum,
+                weight_decay=cfg.optimizer.weight_decay,
                 record_update_metrics=cfg.optimizer.record_update_metrics,
                 selective_updates=cfg.optimizer.selective_updates,
             ),

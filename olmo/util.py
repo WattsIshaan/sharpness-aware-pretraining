@@ -8,6 +8,7 @@ import shutil
 import socket
 import sys
 import time
+import subprocess
 import warnings
 from datetime import datetime
 from enum import Enum
@@ -391,6 +392,44 @@ def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> byte
         with open(source, "rb") as f:
             f.seek(bytes_start)
             return f.read(num_bytes)
+
+
+def run_sync_cmd(timeout: Optional[float] = None) -> None:
+    """
+    If the environment variable SYNC_CMD is set (non-empty), run it as a shell command.
+
+    :param timeout: Optional timeout (in seconds) for the command execution.
+    :raises OLMoCliError: if the command fails to execute or exits with a non-zero status.
+    """
+    cmd = os.environ.get("SYNC_CMD")
+    if not cmd:
+        return
+
+    log.info("Running SYNC_CMD: %s", cmd)
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.stdout:
+            for line in result.stdout.rstrip().splitlines():
+                log.info(line)
+        if result.stderr:
+            for line in result.stderr.rstrip().splitlines():
+                log.warning(line)
+    except subprocess.CalledProcessError as e:
+        msg = f"SYNC_CMD failed with exit code {e.returncode}"
+        if e.stdout:
+            msg += f"\nstdout:\n{e.stdout}"
+        if e.stderr:
+            msg += f"\nstderr:\n{e.stderr}"
+        raise OLMoCliError(msg) from e
+    except (OSError, ValueError) as e:
+        raise OLMoCliError(f"Failed to execute SYNC_CMD: {e}") from e
 
 
 def find_latest_checkpoint(dir: PathOrStr) -> Optional[PathOrStr]:

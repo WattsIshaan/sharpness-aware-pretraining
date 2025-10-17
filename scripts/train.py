@@ -120,6 +120,8 @@ def main(cfg: TrainConfig) -> None:
             group=cfg.wandb.group,
             name=cfg.wandb.name,
             tags=cfg.wandb.tags,
+            id=cfg.wandb.id,
+            resume=cfg.wandb.resume,
             config=cfg.asdict(exclude=["wandb"]),
         )
 
