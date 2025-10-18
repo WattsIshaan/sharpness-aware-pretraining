@@ -1,12 +1,15 @@
 """Global constants and paths for the Wikipedia pretraining experiment."""
 
 import subprocess
+import os
+import random
+import string
 
 # Remote existence checking
 CHECK_EXISTS_REMOTE = True  # Set to False to skip remote existence checks for speed
 
 WANDB_ENTITY = 'iwatts-carnegie-mellon-university'
-PROJECT_NAME = 'catastrophic-forgetting'
+PROJECT_NAME = 'sam-ablation'
 LOCAL_DATA_PATH = f'/tmp/iwatts/outputs/{PROJECT_NAME}'
 LOCAL_HF_PATH = f'/tmp/iwatts/hf'
 CODE_PATH = ''
@@ -49,3 +52,6 @@ def get_remote_files():
             _remote_files_cache = set()
     
     return _remote_files_cache
+
+def get_random_local_path():
+    return os.path.join(LOCAL_DATA_PATH, ''.join(random.choices(string.ascii_letters, k=8)))
