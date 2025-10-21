@@ -20,6 +20,8 @@ __all__ = [
     "LionW",
     "AdamW",
     "SGD",
+    "SAM",
+    "Muon",
     "Scheduler",
     "CosWithWarmup",
     "LinearWithWarmup",
@@ -833,6 +835,153 @@ class SAM(Optimizer):
             return self.base_optimizer.get_post_step_metrics(module, process_group)
         return {}
 
+class Muon(Optimizer):
+     """
+    Muon code
+    Taken from https://github.com/KellerJordan/Muon/blob/master/muon.py.
+    """
+    def __init__(self, *args, record_update_metrics: bool = False, selective_updates: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._record_update_metrics = record_update_metrics
+        self._collecting_metrics = False
+
+        # Buffers for metrics
+        self._step_size_param_names: Optional[List[str]] = None
+        self._step_size_norms: Optional[List[torch.Tensor]] = None
+        self._step_size_maxs: Optional[List[torch.Tensor]] = None
+    
+    def _zeropower_via_newtonschulz5(self, G, steps: int):
+        """
+        From https://github.com/KellerJordan/Muon/blob/master/muon.py#L5C5-L5C32
+        """
+        assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
+        a, b, c = (3.4445, -4.7750,  2.0315)
+        X = G.bfloat16()
+        if G.size(-2) > G.size(-1):
+            X = X.mT
+
+        # Ensure spectral norm is at most 1
+        X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
+        # Perform the NS iterations
+        for _ in range(steps):
+            A = X @ X.mT
+            B = b * A + c * A @ A # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
+            X = a * X + B @ X
+        
+        if G.size(-2) > G.size(-1):
+            X = X.mT
+        return X
+    
+    def _muon_update(self, grad, momentum, beta=0.95, ns_steps=5, nesterov=True):
+         """
+        From https://github.com/KellerJordan/Muon/blob/master/muon.py#L5C5-L5C32
+        """
+        momentum.lerp_(grad, 1 - beta)
+        update = grad.lerp_(momentum, beta) if nesterov else momentum
+        if update.ndim == 4: # for the case of conv filters
+            update = update.view(len(update), -1)
+        update = self._zeropower_via_newtonschulz5(update, steps=ns_steps)
+        update *= max(1, grad.size(-2) / grad.size(-1))**0.5
+        return update
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        """
+        https://github.com/KellerJordan/Muon/blob/master/muon.py#L72
+        """
+        if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
+            return super().step(closure=closure)
+
+        param_names = []
+        step_size_norms = []
+        step_size_maxs = []
+        lr = group["lr"]
+        momentum = group["momentum"]
+        weight_decay = group["weight_decay"]
+
+
+        for group in self.param_groups:
+            params = group["params"]
+            params_pad = params + [torch.empty_like(params[-1])] * (dist.get_world_size() - len(params) % dist.get_world_size())
+
+            for base_i in range(len(params))[::dist.get_world_size()]:
+                if base_i + dist.get_rank() < len(params):
+                    name = group.get("param_names", [None] * len(params))[base_i + dist.get_rank()]
+                    param_names.append(name if name is not None else f"param_{base_i + dist.get_rank()}")
+
+                    p = params[base_i + dist.get_rank()]
+                    if p.grad is None:O
+                        # continue
+                        p.grad = torch.zeros_like(p)  # Force synchronization
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["momentum_buffer"] = torch.zeros_like(p)
+                    update = self._muon_update(p.grad, state["momentum_buffer"], beta=momentum)
+
+                    # Perform step weight decay.
+                    if self._selective_updates:
+                        mask: Union[torch.Tensor, int] = grad != 0
+                    else:
+                        mask = 1
+
+                    # Apply weight decay only to selected elements if selective_updates is enabled
+                    if isinstance(mask, torch.Tensor):
+                        # Only decay weights where mask is True
+                        p.mul_(1 - mask * lr * weight_decay)
+                    else:
+                        p.mul_(1 - lr * weight_decay)
+
+                    p.add_(update.reshape(p.shape), alpha=-lr)
+
+                    step_size_norms.append(torch.linalg.vector_norm(update, 2.0, dtype=torch.float32).unsqueeze(0))
+                    step_size_maxs.append(update.abs().max().unsqueeze(0))
+                dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
+
+        self._step_size_param_names = param_names
+        self._step_size_norms = step_size_norms
+        self._step_size_maxs = step_size_maxs
+
+
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        if not (self._record_update_metrics and self._collecting_metrics):
+            return {}
+        else:
+            device = get_default_device()
+            dst_rank = 0
+            if process_group is not None:
+                dst_rank = dist.get_global_rank(process_group, 0)
+            param_names = self._step_size_param_names
+            step_size_norms = self._step_size_norms
+            step_size_maxs = self._step_size_maxs
+            assert param_names is not None
+            assert step_size_norms is not None
+            assert step_size_maxs is not None
+
+            # Reduce metrics if needed.
+            if is_distributed() and isinstance(module, FullyShardedDataParallel):
+                # Reduce norms.
+                all_norms = torch.cat(step_size_norms).to(device) ** 2.0
+                dist.reduce(all_norms, dst_rank, op=dist.ReduceOp.SUM, group=process_group)
+                step_size_norms = (all_norms ** (0.5)).squeeze(0).split(1)
+
+                # Reduce maxs.
+                all_maxs = torch.cat(step_size_maxs).to(device)
+                dist.reduce(all_maxs, dst_rank, op=dist.ReduceOp.MAX, group=process_group)
+                step_size_maxs = all_maxs.split(1)
+
+            metrics = {}
+            for param_name, step_size_norm, step_size_max in zip(param_names, step_size_norms, step_size_maxs):  # type: ignore[arg-type]
+                metrics[f"step/{param_name}.norm"] = step_size_norm.squeeze(0)
+                metrics[f"step/{param_name}.max"] = step_size_max.squeeze(0)
+
+            self._step_size_param_names = None
+            self._step_size_norms = None
+            self._step_size_maxs = None
+            return metrics
+
 
 
 @dataclass
@@ -1169,6 +1318,15 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
                 selective_updates=cfg.optimizer.selective_updates,
             ),
             rho=cfg.optimizer.sam_rho,
+        )
+    elif cfg.optimizer.name == OptimizerType.muon:
+        return Muon(
+            param_groups,
+            lr=cfg.optimizer.learning_rate,
+            weight_decay=cfg.optimizer.weight_decay,
+            momentum=cfg.optimizer.momentum,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,  
         )
     else:
         raise NotImplementedError

@@ -501,6 +501,7 @@ class OptimizerType(StrEnum):
     adamw = "adamw"
     sgd = "sgd"
     sam = "sam"
+    muon = "muon"
 
 
 @dataclass

@@ -72,7 +72,7 @@ class PretrainedModel(Artifact):
         return {
             'gpus': self.pretrain_gpus,
             'nodes': 1,
-            'cpus': self.pretrain_gpus * 2,
+            'cpus': max(1, self.pretrain_gpus * 2),
             'mem': '32GB',
             'requeue': True
         }

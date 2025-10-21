@@ -2,7 +2,7 @@
 
 # 1) Load project configuration as early as possible
 from launch import globals as G
-G.load_project('sam-ablation')
+G.load_project('muon')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
@@ -21,6 +21,7 @@ sgd_pretrained_models = ArtifactSet.from_product(
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'scheduler_alpha_f': [0.1],
+            'pretrain_gpus' : [0]
         }
     )
 
@@ -35,7 +36,7 @@ sgd_cpt_model_evaluations = build_cpt_model_evaluations(sgd_cpt_models)
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting'
+    'conda activate env310'
 ])
 
 # Create executor
