@@ -836,7 +836,7 @@ class SAM(Optimizer):
         return {}
 
 class Muon(Optimizer):
-     """
+    """
     Muon code
     Taken from https://github.com/KellerJordan/Muon/blob/master/muon.py.
     """
@@ -874,7 +874,7 @@ class Muon(Optimizer):
         return X
     
     def _muon_update(self, grad, momentum, beta=0.95, ns_steps=5, nesterov=True):
-         """
+        """
         From https://github.com/KellerJordan/Muon/blob/master/muon.py#L5C5-L5C32
         """
         momentum.lerp_(grad, 1 - beta)
@@ -911,7 +911,7 @@ class Muon(Optimizer):
                     param_names.append(name if name is not None else f"param_{base_i + dist.get_rank()}")
 
                     p = params[base_i + dist.get_rank()]
-                    if p.grad is None:O
+                    if p.grad is None:
                         # continue
                         p.grad = torch.zeros_like(p)  # Force synchronization
                     state = self.state[p]
@@ -1308,7 +1308,8 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             selective_updates=cfg.optimizer.selective_updates,
         )
     elif cfg.optimizer.name == OptimizerType.sam:
-        return SAM(
+        if cfg.optimizer.sam_base_optimizer == 'sgd':
+            return SAM(
             base_optimizer=SGD(
                 param_groups,
                 lr=cfg.optimizer.learning_rate,
@@ -1319,6 +1320,23 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             ),
             rho=cfg.optimizer.sam_rho,
         )
+        elif cfg.optimizer.sam_base_optimizer == 'adamw':
+            return SAM(
+            base_optimizer=AdamW(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                betas=cfg.optimizer.betas,
+                weight_decay=cfg.optimizer.weight_decay,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+                eps=cfg.optimizer.eps,
+            ),
+            rho=cfg.optimizer.sam_rho,
+        )
+        else:
+            raise NotImplementedError
+
+        
     elif cfg.optimizer.name == OptimizerType.muon:
         return Muon(
             param_groups,

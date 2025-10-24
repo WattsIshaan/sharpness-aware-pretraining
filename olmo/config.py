@@ -513,6 +513,7 @@ class OptimizerConfig(BaseConfig):
     eps: float = 1e-5
     sam_rho: float = 0.05
     momentum: float = 0.9
+    sam_base_optimizer: str = 'adamw'
 
     no_decay_norm_and_bias: Optional[bool] = None
     """

@@ -55,6 +55,7 @@ def get_train_config(
     optimizer_betas=(0.9, 0.95),
     momentum=0.9,
     sam_rho=0.05,
+    sam_base_optimizer='adamw',
     optimizer_eps=1e-8,
     global_train_batch_size=256,
     device_train_microbatch_size=32,
@@ -149,7 +150,8 @@ def get_train_config(
             'betas': list(optimizer_betas),
             'metrics_log_interval': 10,
             'momentum': momentum,
-            'sam_rho': sam_rho
+            'sam_rho': sam_rho,
+            'sam_base_optimizer': sam_base_optimizer,
         },
         
         'scheduler': {
