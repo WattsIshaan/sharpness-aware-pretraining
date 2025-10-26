@@ -35,10 +35,15 @@ class PretrainedModel(Artifact):
     learning_rate: float = 6e-4
     weight_decay: float = 0.1
     sam_rho: float = 0.05
+    momentum: float = 0.1
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
     pretrain_gpus: int = 2
+    muon_learning_rate: float = 5e-1, #EDIT
+    muon_momentum: float = 0.95,
+    muon_weight_decay: float = 0.1,
+ 
     
     @property
     def relpath(self) -> str:
@@ -58,6 +63,8 @@ class PretrainedModel(Artifact):
         final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
         if self.optimizer == 'sam':
             final_run_name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
+        if self.optimizer =='muon':
+            final_run_name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
 
         return final_run_name 
     
@@ -111,7 +118,11 @@ class PretrainedModel(Artifact):
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
+            muon_learning_rate = self.muon_learning_rate,
+            muon_momentum = self.muon_momentum,
+            muon_weight_decay = self.muon_weight_decay,
             sam_rho=self.sam_rho,
+            momentum=self.momentum,
             max_duration=f"{self.train_tokens}e9T",
             stop_at=None,
             seed=6198,
@@ -209,6 +220,8 @@ class CPTModel(Artifact):
     @property
     def run_name(self) -> str:
         pretrained_model_name = self.pretrained_model.run_name
+
+        #EDITED FOR MUON
         
         lr_str = f'{self.learning_rate:.0e}'.replace('e-0', 'e-')
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
