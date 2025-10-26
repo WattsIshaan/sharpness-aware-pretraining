@@ -35,7 +35,7 @@ class PretrainedModel(Artifact):
     learning_rate: float = 6e-4
     weight_decay: float = 0.1
     sam_rho: float = 0.05
-    momentum: float = 0.1
+    sam_base_optimizer: str = 'adamw'
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
@@ -122,15 +122,15 @@ class PretrainedModel(Artifact):
             muon_momentum = self.muon_momentum,
             muon_weight_decay = self.muon_weight_decay,
             sam_rho=self.sam_rho,
-            momentum=self.momentum,
+            sam_base_optimizer=self.sam_base_optimizer,
             max_duration=f"{self.train_tokens}e9T",
             stop_at=None,
             seed=6198,
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=4,
-            eval_interval=1000,
+            device_train_microbatch_size=64,
+            eval_interval=5000,
             save_interval_unsharded=5000,
             wandb_project=project_name,
             wandb_entity=wandb_entity,
@@ -287,7 +287,7 @@ class CPTModel(Artifact):
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=4,
+            device_train_microbatch_size=64,
             eval_interval=100,
             save_interval_unsharded=1000,
             wandb_project=project_name,

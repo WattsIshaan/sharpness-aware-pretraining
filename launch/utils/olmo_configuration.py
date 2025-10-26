@@ -55,6 +55,7 @@ def get_train_config(
     optimizer_betas=(0.9, 0.95),
     momentum=0.9,
     sam_rho=0.05,
+    sam_base_optimizer='adamw',
     optimizer_eps=1e-8,
     muon_learning_rate=5e-2, #EDIT
     muon_momentum=0.95,
@@ -153,6 +154,7 @@ def get_train_config(
             'metrics_log_interval': 10,
             'momentum': momentum,
             'sam_rho': sam_rho,
+            'sam_base_optimizer': sam_base_optimizer,,
             'muon_learning_rate': muon_learning_rate, #EDIT
             'muon_momentum': muon_momentum,
             'muon_weight_decay': muon_weight_decay,
