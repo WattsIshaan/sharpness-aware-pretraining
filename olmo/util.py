@@ -394,42 +394,56 @@ def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> byte
             return f.read(num_bytes)
 
 
-def run_sync_cmd(timeout: Optional[float] = None) -> None:
+def run_sync_cmd(timeout: Optional[float] = None, max_retries: int = 3, retry_wait: float = 3.0) -> None:
     """
     If the environment variable SYNC_CMD is set (non-empty), run it as a shell command.
+    Retries the command up to `max_retries` times if it fails.
 
     :param timeout: Optional timeout (in seconds) for the command execution.
+    :param max_retries: Number of times to retry the command on failure.
+    :param retry_wait: Seconds to wait between retries.
     :raises OLMoCliError: if the command fails to execute or exits with a non-zero status.
     """
+
     cmd = os.environ.get("SYNC_CMD")
     if not cmd:
         return
 
-    log.info("Running SYNC_CMD: %s", cmd)
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.stdout:
-            for line in result.stdout.rstrip().splitlines():
-                log.info(line)
-        if result.stderr:
-            for line in result.stderr.rstrip().splitlines():
-                log.warning(line)
-    except subprocess.CalledProcessError as e:
-        msg = f"SYNC_CMD failed with exit code {e.returncode}"
-        if e.stdout:
-            msg += f"\nstdout:\n{e.stdout}"
-        if e.stderr:
-            msg += f"\nstderr:\n{e.stderr}"
-        raise OLMoCliError(msg) from e
-    except (OSError, ValueError) as e:
-        raise OLMoCliError(f"Failed to execute SYNC_CMD: {e}") from e
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        log.info("Running SYNC_CMD: %s (attempt %d/%d)", cmd, attempt, max_retries)
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.stdout:
+                for line in result.stdout.rstrip().splitlines():
+                    log.info(line)
+            if result.stderr:
+                for line in result.stderr.rstrip().splitlines():
+                    log.warning(line)
+            # Success, so exit early
+            return
+        except subprocess.CalledProcessError as e:
+            msg = f"SYNC_CMD failed with exit code {e.returncode}"
+            if e.stdout:
+                msg += f"\nstdout:\n{e.stdout}"
+            if e.stderr:
+                msg += f"\nstderr:\n{e.stderr}"
+            last_exception = OLMoCliError(msg)
+        except (OSError, ValueError) as e:
+            last_exception = OLMoCliError(f"Failed to execute SYNC_CMD: {e}")
+        if attempt < max_retries:
+            log.warning("SYNC_CMD failed (attempt %d/%d), retrying in %.1f seconds...", attempt, max_retries, retry_wait)
+            time.sleep(retry_wait)
+    # All attempts failed, raise last exception
+    if last_exception:
+        raise last_exception
 
 
 def find_latest_checkpoint(dir: PathOrStr) -> Optional[PathOrStr]:

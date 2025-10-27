@@ -513,6 +513,10 @@ class OptimizerConfig(BaseConfig):
     eps: float = 1e-5
     sam_rho: float = 0.05
     momentum: float = 0.9
+    sam_base_optimizer: str = 'adamw'
+    muon_learning_rate: float = 5e-2 #EDIT
+    muon_momentum: float = 0.95
+    muon_weight_decay: float = 0.02
 
     no_decay_norm_and_bias: Optional[bool] = None
     """

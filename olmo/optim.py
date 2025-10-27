@@ -845,6 +845,7 @@ class Muon(Optimizer):
 
     def __init__(
         self,
+        base_optimizer,
         params,
         lr=0.02,
         weight_decay=0,
@@ -853,10 +854,13 @@ class Muon(Optimizer):
         selective_updates: bool = False,
     ):
         defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
-        assert isinstance(params, list) and len(params) >= 1 and isinstance(params[0], torch.nn.Parameter)
-        params = sorted(params, key=lambda x: x.size(), reverse=True)
+        #assert isinstance(params, list) and len(params) >= 1 and isinstance(params[0], torch.nn.Parameter)
+        for group in params:
+            group["params"] = sorted(group["params"], key=lambda x: x.size(), reverse=True)
+            print(f"Keys: {group.keys()}")
         super().__init__(params, defaults)
 
+        self.base_optimizer = base_optimizer
         self._record_update_metrics = record_update_metrics
         self._collecting_metrics = False
 
@@ -908,18 +912,20 @@ class Muon(Optimizer):
         """
         https://github.com/KellerJordan/Muon/blob/master/muon.py#L72
         """
-        if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
-            return super().step(closure=closure)
+        if closure is not None:
+            with torch.enable_grad():
+                closure()
 
         param_names = []
         step_size_norms = []
         step_size_maxs = []
-        lr = group["lr"]
-        momentum = group["momentum"]
-        weight_decay = group["weight_decay"]
 
         for group in self.param_groups:
+            lr = group["lr"]
+            momentum = group["momentum"]
+            weight_decay = group["weight_decay"]
             params = group["params"]
+            #can only use muon on weight matrices where ndim >= 2, use adam on other params
             params_pad = params + [torch.empty_like(params[-1])] * (
                 dist.get_world_size() - len(params) % dist.get_world_size()
             )
@@ -958,6 +964,7 @@ class Muon(Optimizer):
                 dist.all_gather(
                     params_pad[base_i : base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()]
                 )
+        self.base_optimizer.step(closure=closure)
 
         self._step_size_param_names = param_names
         self._step_size_norms = step_size_norms
@@ -1263,6 +1270,120 @@ def get_param_groups(cfg: TrainConfig, model: nn.Module) -> List[Dict[str, Any]]
 
     return param_groups
 
+def get_param_groups_muon(cfg: TrainConfig, model: nn.Module) -> List[Dict[str, Any]]: #edit config to include adam and muon params
+    """
+    Separate parameters into weight decay and non weight decay groups.
+    """
+    param_group_defaults = {
+        "sharded": isinstance(model, FullyShardedDataParallel),
+        "max_grad_norm": cfg.max_grad_norm,
+        "max_grad_norm_ratio": cfg.max_grad_norm_ratio,
+    }
+
+
+
+    # Separate out parameters that we don't want to apply weight decay to, like norms and biases.
+    decay_muon = set()
+    decay = set()
+    no_decay_muon = set()
+    no_decay = set()
+    all_params = {}
+    for mn, m in model.named_modules():
+        for pn, p in m.named_parameters():
+            # NOTE: because named_modules and named_parameters are recursive
+            # we will see the same tensors p many many times, but doing it this way
+            # allows us to know which parent module any tensor p belongs to...
+            if not p.requires_grad:
+                continue
+
+            fpn = f"{mn}.{pn}" if mn else pn
+            all_params[fpn] = p
+
+            if pn.endswith("bias"):
+                if cfg.optimizer.decay_norm_and_bias:
+                    decay.add(fpn)
+                else:
+                    no_decay.add(fpn)
+            elif pn.endswith("weight") and isinstance(m, nn.Linear):
+                if p.ndim >= 2:
+                    decay_muon.add(fpn)
+                else:
+                    decay.add(fpn)
+            elif pn.endswith("weight") and isinstance(m, (LayerNormBase, nn.LayerNorm)):
+                if cfg.optimizer.decay_norm_and_bias:
+                    decay.add(fpn)
+                else:
+                    no_decay.add(fpn)
+            elif pn.endswith("weight") and isinstance(m, nn.Embedding):
+                if cfg.optimizer.decay_embeddings:
+                    decay.add(fpn)
+                else:
+                    no_decay.add(fpn)
+
+    # Validate that we've considered every parameter
+    inter_params = (decay_muon & no_decay_muon) | (decay & no_decay) | \
+               (decay_muon & decay) | (decay_muon & no_decay) | \
+               (no_decay_muon & decay) | (no_decay_muon & no_decay)
+    union_params = decay_muon | no_decay_muon | decay | no_decay
+    assert len(inter_params) == 0, f"parameters {inter_params} made it into both decay/no_decay_muon X muon/no_muon sets!"
+    assert (
+        len(all_params.keys() - union_params) == 0
+    ), f"parameters {all_params.keys() - union_params} were not separated into either decay/no_decay X muon/no_muon set!"
+
+    # Create the pytorch optimizer groups.
+    decay_muon_sorted = sorted(list(decay_muon))
+    no_decay_muon_sorted = sorted(list(no_decay_muon))
+    decay_sorted = sorted(list(decay))
+    no_decay_sorted = sorted(list(no_decay))
+
+    param_groups = []
+    param_groups_muon = []
+    if len(decay_muon_sorted) > 0:
+        param_groups_muon.append(
+            {
+                "params": [all_params[pn] for pn in decay_muon_sorted],
+                "param_names": decay_muon_sorted,
+                "use_muon": True,
+                **param_group_defaults,
+            }
+        )
+    if len(no_decay_muon_sorted) > 0:
+        param_groups_muon.append(
+            {
+                "params": [all_params[pn] for pn in no_decay_muon_sorted],
+                "param_names": no_decay_muon_sorted,
+                "weight_decay": 0.0,
+                "use_muon": True,
+                **param_group_defaults,
+            }
+        )
+    if len(decay_sorted) > 0:
+        param_groups.append(
+            {
+                "params": [all_params[pn] for pn in decay_sorted],
+                "param_names": decay_sorted,
+                "use_muon": False,
+                **param_group_defaults,
+            }
+        )
+    if len(no_decay_sorted) > 0:
+        param_groups.append(
+            {
+                "params": [all_params[pn] for pn in no_decay_sorted],
+                "param_names": no_decay_sorted,
+                "weight_decay": 0.0,
+                "use_muon": False,
+                **param_group_defaults,
+            }
+        )
+
+    # Validate fields.
+    for group in param_groups:
+        for key in PARAM_GROUP_FIELDS:
+            assert key in group
+
+    return param_groups, param_groups_muon
+
 
 def fix_optim_state_dict(optimizer: Optimizer, state_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1327,7 +1448,8 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             selective_updates=cfg.optimizer.selective_updates,
         )
     elif cfg.optimizer.name == OptimizerType.sam:
-        return SAM(
+        if cfg.optimizer.sam_base_optimizer == 'sgd':
+            return SAM(
             base_optimizer=SGD(
                 param_groups,
                 lr=cfg.optimizer.learning_rate,
@@ -1338,19 +1460,40 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             ),
             rho=cfg.optimizer.sam_rho,
         )
-    elif cfg.optimizer.name == OptimizerType.muon:
-        param_groups = get_param_groups(cfg, model)  # this is a list of dicts
-        params = [p for g in param_groups for p in g['params']]  # flatten all params   
-        return Muon(
-            params,
-            lr=cfg.optimizer.learning_rate,
-            weight_decay=cfg.optimizer.weight_decay,
-            momentum=cfg.optimizer.momentum,
-            record_update_metrics=cfg.optimizer.record_update_metrics,
-            selective_updates=cfg.optimizer.selective_updates,
+        elif cfg.optimizer.sam_base_optimizer == 'adamw':
+            return SAM(
+            base_optimizer=AdamW(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                betas=cfg.optimizer.betas,
+                weight_decay=cfg.optimizer.weight_decay,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+                eps=cfg.optimizer.eps,
+            ),
+            rho=cfg.optimizer.sam_rho,
         )
-    else:
-        raise NotImplementedError
+        elif cfg.optimizer.name == OptimizerType.muon:
+            param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
+            return Muon(
+                base_optimizer=AdamW(
+                    param_groups,
+                    lr=cfg.optimizer.learning_rate,
+                    betas=cfg.optimizer.betas,
+                    weight_decay=cfg.optimizer.weight_decay,
+                    record_update_metrics=cfg.optimizer.record_update_metrics,
+                    selective_updates=cfg.optimizer.selective_updates,
+                    eps=cfg.optimizer.eps,
+                ),
+                params=muon_param_groups,
+                lr=cfg.optimizer.muon_learning_rate,
+                weight_decay=cfg.optimizer.muon_weight_decay,
+                momentum=cfg.optimizer.muon_momentum,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+            )
+        else:
+            raise NotImplementedError
 
 
 def build_scheduler(cfg: TrainConfig, sched_cfg: Optional[SchedulerConfig] = None) -> Scheduler:

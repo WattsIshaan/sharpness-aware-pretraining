@@ -15,14 +15,16 @@ muon_pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
             'optimizer': ['muon'],
-            'learning_rate': [5e-4],
-            'momentum' : [0.1],
-            'train_tokens': [1],
-            'weight_decay': [0.02],
+            'muon_learning_rate': [5e-2, 5e-3, 5e-4, 5e-5],
+            'muon_momentum' : [0.95],
+            'muon_weight_decay': 0.1,
+            'train_tokens': [4,8,16,32,64],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'scheduler_alpha_f': [0.1],
-            'pretrain_gpus' : [1]
+            'pretrain_gpus' : 4,
+            'learning_rate': 3e-4,
+            'weight_decay': 0.1,
         }
     )
 
@@ -37,7 +39,7 @@ muon_cpt_model_evaluations = build_cpt_model_evaluations(muon_cpt_models)
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate env310'
+    'conda activate myenv310'
 ])
 
 # Create executor
