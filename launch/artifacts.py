@@ -2,10 +2,11 @@ import os
 import random
 from dataclasses import dataclass
 from typing import cast
-from experiments import Artifact, Task  # type: ignore
+from experiments import Artifact, Task, Project  # type: ignore
 from launch import globals as G
 from launch.utils.olmo_configuration import get_train_config
 import math
+
 
 LIST_OF_PRETRAIN_FILES = [
     f'datasets/c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy'
@@ -64,7 +65,7 @@ class PretrainedModel(Artifact):
     
     @property
     def exists(self) -> bool:
-        gs_path: str = cast(str, G.GS_PATH)
+        gs_path: str = cast(str, Project.config.GS_PATH)
         remote_path = os.path.join(gs_path, self.checkpoint_relpath)
         remote_files = G.get_remote_files()
         return any(f.startswith(remote_path) for f in remote_files)
@@ -83,7 +84,7 @@ class PretrainedModel(Artifact):
 
         run_name = self.run_name
         save_folder = os.path.join(local_data_path, self.relpath)
-        gs_path: str = cast(str, G.GS_PATH)
+        gs_path: str = cast(str, Project.config.GS_PATH)
         remote_folder = os.path.join(gs_path, self.relpath)
         
         # Build training data paths from the training_data artifact set
@@ -102,8 +103,8 @@ class PretrainedModel(Artifact):
             ]
         
         # Create pretrain config using configuration utility
-        project_name: str = cast(str, G.PROJECT_NAME)
-        wandb_entity: str = cast(str, G.WANDB_ENTITY)
+        project_name: str = cast(str, Project.config.PROJECT_NAME)
+        wandb_entity: str = cast(str, Project.config.WANDB_ENTITY)
         config = get_train_config(
             run_name=run_name,
             save_folder=save_folder,
@@ -122,7 +123,7 @@ class PretrainedModel(Artifact):
             global_train_batch_size=self.batch_size,
             device_train_microbatch_size=4,
             eval_interval=1000,
-            save_interval_unsharded=5000,
+            save_interval_unsharded=5,
             wandb_project=project_name,
             wandb_entity=wandb_entity,
             wandb_id=run_name,
@@ -158,12 +159,12 @@ class PretrainedModel(Artifact):
         
         # Download directories from GS
         for local_dir in all_data_paths:
-            gs_data_path: str = cast(str, G.GS_DATA_PATH)
+            gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
             gs_dir = local_dir.replace(local_data_path, gs_data_path)
             builder.download_from_gs(gs_dir, local_dir, directory=False)
         
         # Setup OLMo environment and run training
-        olmo_path: str = cast(str, G.OLMO_PATH)
+        olmo_path: str = cast(str, Project.config.OLMO_PATH)
         train_script = os.path.join(olmo_path, 'scripts', 'train.py')
         builder.run_command(
             f'cd {olmo_path} && '
@@ -203,7 +204,7 @@ class CPTModel(Artifact):
 
     @property
     def exists(self) -> bool:
-        gs_root: str = cast(str, G.GS_PATH)
+        gs_root: str = cast(str, Project.config.GS_PATH)
         remote_path = os.path.join(gs_root, self.checkpoint_relpath)
         remote_files = G.get_remote_files()
         return any(f.startswith(remote_path) for f in remote_files)
@@ -230,7 +231,7 @@ class CPTModel(Artifact):
         local_data_path = G.get_random_local_path()
         run_name = self.run_name
         save_folder = os.path.join(local_data_path, self.relpath)
-        gs_root: str = cast(str, G.GS_PATH)
+        gs_root: str = cast(str, Project.config.GS_PATH)
         remote_folder = os.path.join(gs_root, self.relpath)
 
         pretrained_model_relpath = self.pretrained_model.checkpoint_relpath
@@ -260,8 +261,8 @@ class CPTModel(Artifact):
                 for eval_data_path in LIST_OF_VAL_FILES[eval_dataset]
             ]
 
-        project_name: str = cast(str, G.PROJECT_NAME)
-        wandb_entity: str = cast(str, G.WANDB_ENTITY)
+        project_name: str = cast(str, Project.config.PROJECT_NAME)
+        wandb_entity: str = cast(str, Project.config.WANDB_ENTITY)
         config = get_train_config(
             run_name=run_name,
             save_folder=save_folder,
@@ -299,12 +300,12 @@ class CPTModel(Artifact):
         
         # Download directories from GS
         for local_dir in all_data_paths:
-            gs_data_path: str = cast(str, G.GS_DATA_PATH)
+            gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
             gs_dir = local_dir.replace(local_data_path, gs_data_path)
             builder.download_from_gs(gs_dir, local_dir, directory=False)
         
 
-        olmo_path: str = cast(str, G.OLMO_PATH)
+        olmo_path: str = cast(str, Project.config.OLMO_PATH)
         train_script = os.path.join(olmo_path, 'scripts', 'train.py')
         builder.run_command(
             f'cd {olmo_path} && '
@@ -332,7 +333,7 @@ class ModelEvaluation(Artifact):
 
     @property
     def exists(self) -> bool:
-        gs_path: str = cast(str, G.GS_PATH)
+        gs_path: str = cast(str, Project.config.GS_PATH)
         remote_path = os.path.join(gs_path, self.relpath)
         remote_files = G.get_remote_files()
         return any(f == remote_path for f in remote_files)
@@ -357,7 +358,7 @@ class ModelEvaluation(Artifact):
 
         # Ensure model checkpoint is available locally (rsync from GS)
         local_model_path = os.path.join(local_root, self.model.checkpoint_relpath)
-        gs_root: str = cast(str, G.GS_PATH)
+        gs_root: str = cast(str, Project.config.GS_PATH)
         remote_model_path = os.path.join(gs_root, self.model.checkpoint_relpath)
         builder.rsync_from_gs(
             remote_model_path,
@@ -377,7 +378,7 @@ class ModelEvaluation(Artifact):
                 local_eval_paths.append(local_eval_path)
         # Download each eval file from GS_DATA_PATH mirror
         for local_path in local_eval_paths:
-            gs_data_path: str = cast(str, G.GS_DATA_PATH)
+            gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
             gs_path_var = local_path.replace(local_root, gs_data_path)
             builder.download_from_gs(gs_path_var, local_path, directory=False)
 
@@ -401,7 +402,7 @@ class ModelEvaluation(Artifact):
 
         # Upload results to GS
         local_eval_dir = os.path.dirname(local_output_path)
-        gs_path: str = cast(str, G.GS_PATH)
+        gs_path: str = cast(str, Project.config.GS_PATH)
         remote_eval_dir = os.path.join(gs_path, os.path.dirname(self.relpath))
         builder.rsync_to_gs(
             local_eval_dir,

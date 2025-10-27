@@ -1,11 +1,11 @@
 """Muon (SGD-only) pretraining and evaluation runner."""
 
 # 1) Load project configuration as early as possible
-from launch import globals as G
-G.load_project('muon')
 
 # 2) Rest of imports
-from experiments import SlurmExecutor, ArtifactSet  # type: ignore
+from experiments import SlurmExecutor, ArtifactSet, Project  # type: ignore
+Project.init("muon")
+
 from launch.artifacts import PretrainedModel, ModelEvaluation
 from launch.cpt import build_cpt_models, build_cpt_model_evaluations
 
@@ -42,9 +42,6 @@ setup_command = ' && '.join([
 
 # Create executor
 executor = SlurmExecutor(
-    project=G.PROJECT_NAME,
-    artifact_path=G.LOCAL_DATA_PATH,
-    code_path=G.CODE_PATH,
     setup_command=setup_command,
 )
 

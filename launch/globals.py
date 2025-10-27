@@ -7,74 +7,30 @@ import random
 import string
 import json
 from typing import Optional, Set, cast
-
-# Module variables are declared but uninitialized until load_project is called.
-CHECK_EXISTS_REMOTE: Optional[bool] = None
-WANDB_ENTITY: Optional[str] = None
-PROJECT_NAME: Optional[str] = None
-LOCAL_DATA_PATH: Optional[str] = None
-LOCAL_HF_PATH: Optional[str] = None
-CODE_PATH: Optional[str] = None
-OLMO_PATH: Optional[str] = None
-GS_PATH: Optional[str] = None
-GS_DATA_PATH: Optional[str] = None
+from experiments import Project
 
 
 # Cache for remote GS file list
 _remote_files_cache = None
 
 
-def load_project(project_name: str) -> None:
-    """Load project configuration strictly from ~/.experiments/project-config/{project_name}.json.
-    Raises FileNotFoundError if the config does not exist, or ValueError if required keys are missing.
-    """
-    global CHECK_EXISTS_REMOTE, WANDB_ENTITY, PROJECT_NAME, LOCAL_DATA_PATH, LOCAL_HF_PATH
-    global CODE_PATH, OLMO_PATH, GS_PATH, GS_DATA_PATH, _remote_files_cache
-
-    config_path = os.path.expanduser(f'~/.experiments/project-config/{project_name}.json')
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f'Project config not found: {config_path}')
-
-    with open(config_path, 'r') as f:
-        cfg = json.load(f)
-
-    required_keys = [
-        'CHECK_EXISTS_REMOTE', 'WANDB_ENTITY', 'PROJECT_NAME', 'LOCAL_DATA_PATH',
-        'LOCAL_HF_PATH', 'CODE_PATH', 'OLMO_PATH', 'GS_PATH', 'GS_DATA_PATH'
-    ]
-    missing = [k for k in required_keys if k not in cfg]
-    if missing:
-        raise ValueError(f'Missing required config keys in {config_path}: {missing}')
-
-    CHECK_EXISTS_REMOTE = bool(cfg['CHECK_EXISTS_REMOTE'])
-    WANDB_ENTITY = cfg['WANDB_ENTITY']
-    PROJECT_NAME = cfg['PROJECT_NAME']
-    LOCAL_DATA_PATH = cfg['LOCAL_DATA_PATH']
-    LOCAL_HF_PATH = cfg['LOCAL_HF_PATH']
-    CODE_PATH = cfg['CODE_PATH']
-    OLMO_PATH = cfg['OLMO_PATH']
-    GS_PATH = cfg['GS_PATH']
-    GS_DATA_PATH = cfg['GS_DATA_PATH']
-
-    # Reset remote files cache on project switch
-    _remote_files_cache = None
 
 
 def get_remote_files() -> Set[str]:
     """Get list of all remote files in GS bucket. Cached for performance."""
     global _remote_files_cache
     
-    if CHECK_EXISTS_REMOTE is None:
+    if Project.config.CHECK_EXISTS_REMOTE is None:
         raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
 
-    if not CHECK_EXISTS_REMOTE:
+    if not Project.config.CHECK_EXISTS_REMOTE:
         return set()
     
     if _remote_files_cache is None:
         try:
-            if GS_PATH is None:
+            if Project.config.GS_PATH is None:
                 raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
-            gs_path: str = cast(str, GS_PATH)
+            gs_path: str = cast(str, Project.config.GS_PATH)
             result = subprocess.run(
                 ['gsutil', 'ls', '-r', gs_path],
                 capture_output=True,
@@ -98,7 +54,7 @@ def get_remote_files() -> Set[str]:
     return _remote_files_cache
 
 def get_random_local_path() -> str:
-    if LOCAL_DATA_PATH is None:
+    if Project.config.LOCAL_DATA_PATH is None:
         raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
-    local_data_path: str = cast(str, LOCAL_DATA_PATH)
+    local_data_path: str = cast(str, Project.config.LOCAL_DATA_PATH)
     return os.path.join(local_data_path, ''.join(random.choices(string.ascii_letters, k=8)))

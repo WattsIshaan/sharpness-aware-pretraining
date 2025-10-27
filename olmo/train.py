@@ -59,6 +59,14 @@ from .torch_util import (
 )
 from .util import upload, run_sync_cmd
 
+from experiments.runlib import {
+    get_project_config,
+    get_relpath,
+    upload_to_gs,
+    check_exists_gs,
+    download_from_gs
+}
+
 __all__ = ["SpeedMonitor", "LRMonitor", "Trainer"]
 
 log = logging.getLogger(__name__)
@@ -488,6 +496,18 @@ class Trainer:
                 self.trainer_state_dict(),
                 upload_to=remote_checkpoint_dir,
             )
+
+            gs_path = get_project_config().GS_PATH
+            rel_path = get_relpath()
+
+            if (gs_path != None and rel_path != None):
+                remote_path = os.path.join(gs_path, rel_path, checkpoint_dir)
+
+                if get_global_rank() == 0:
+                    upload_to_gs(checkpoint_dir, remote_path, directory=True, concurrent = True, ensure_contents=True,retry=3 )
+                barrier()
+                
+
         except FileExistsError:
             raise OLMoConfigurationError(
                 f"Checkpoint for step {self.global_step} already exists, use --save_overwrite to overwrite it"
@@ -1284,9 +1304,9 @@ class Trainer:
                             while self.ephemeral_checkpoints:
                                 self.remove_ephemeral_checkpoint()
 
-                            if self.cfg.run_sync_cmd:
-                                log.info("Running SYNC_CMD...")
-                                run_sync_cmd()
+                            # if self.cfg.run_sync_cmd:
+                            #     log.info("Running SYNC_CMD...")
+                            #     run_sync_cmd()
 
                             # Reset speed monitor so that we don't count the time taken to save checkpoints.
                             speed_monitor.reset()
@@ -1317,9 +1337,9 @@ class Trainer:
                         checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
                         log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
 
-                        if self.cfg.run_sync_cmd:
-                            log.info("Running SYNC_CMD...")
-                            run_sync_cmd()
+                        # if self.cfg.run_sync_cmd:
+                        #     log.info("Running SYNC_CMD...")
+                        #     run_sync_cmd()
 
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()
