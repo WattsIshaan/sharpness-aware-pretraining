@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=download_data
-#SBATCH --output=/home/iwatts/catastrophic-forgetting/logs/download_data/%j.out
-#SBATCH --error=/home/iwatts/catastrophic-forgetting/logs/download_data/%j.err
+#SBATCH --output=/home/catheri4/catastrophic-forgetting/logs/download_data/%j.out
+#SBATCH --error=/home/catheri4/catastrophic-forgetting/logs/download_data/%j.err
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -11,18 +11,18 @@
 #SBATCH --requeue
 
 # Set up environment
-cd /home/iwatts/catastrophic-forgetting
+cd /home/catheri4/catastrophic-forgetting
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
 # Default parameters (can be overridden by command line arguments)
-CONFIG_FILE="${1:-configs/tiny/OLMo-20M.yaml}"
-OUTPUT_DIR="${2:-/project/flame/iwatts/datasets/c4/}"
+CONFIG_FILE="${1:-configs/tiny/OLMo-20M-starcoder.yaml}"
+OUTPUT_DIR="${2:-/project/flame/catheri4/datasets/starcoder/}"
 DATA_TYPE="${3:-all}"
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate forgetting
+conda activate env310
 
 # Example usage to override one argument:
 # sbatch job_scripts/download_data.sh configs/tiny/OLMo-20M.yaml /project/flame/iwatts/datasets/c4/ val

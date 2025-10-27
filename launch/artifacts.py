@@ -35,6 +35,7 @@ class PretrainedModel(Artifact):
     learning_rate: float = 6e-4
     weight_decay: float = 0.1
     sam_rho: float = 0.05
+    momentum: float = 0.1
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
@@ -112,6 +113,7 @@ class PretrainedModel(Artifact):
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
             sam_rho=self.sam_rho,
+            momentum=self.momentum,
             max_duration=f"{self.train_tokens}e9T",
             stop_at=None,
             seed=6198,
