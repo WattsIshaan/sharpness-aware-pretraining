@@ -39,10 +39,10 @@ class PretrainedModel(Artifact):
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
-    pretrain_gpus: int = 2
-    muon_learning_rate: float = 5e-1, #EDIT
-    muon_momentum: float = 0.95,
-    muon_weight_decay: float = 0.1,
+    pretrain_gpus: int = 4
+    muon_learning_rate: float = 5e-1 #EDIT
+    muon_momentum: float = 0.95
+    muon_weight_decay: float = 0.1
  
     
     @property
@@ -78,14 +78,11 @@ class PretrainedModel(Artifact):
     
     def get_requirements(self):
         return {
-            # 'gpus': self.pretrain_gpus,
             'gpus':f"A100_40GB:{self.pretrain_gpus}", 
             'nodes': 1,
             'cpus': max(1, self.pretrain_gpus * 2),
             'mem': '64GB',
-            # 'partition': 'preempt',
             'requeue': True,
-            # 'partition': "flame-earlybirds"
         }
     
     def construct(self, builder: Task):
@@ -240,7 +237,7 @@ class CPTModel(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus': self.cpt_gpus,
+            'gpus':f"A100_40GB:{self.cpt_gpus}",
             'nodes': 1,
             'cpus': self.cpt_gpus * 2,
             'mem': '16GB',
@@ -359,7 +356,7 @@ class ModelEvaluation(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus': 1,
+            'gpus':f"A100_40GB:1",
             'nodes': 1,
             'cpus': 2,
             'mem': '16GB',

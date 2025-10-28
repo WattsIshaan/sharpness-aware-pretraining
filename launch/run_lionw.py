@@ -11,13 +11,13 @@ from launch.cpt import build_cpt_models, build_cpt_model_evaluations
 
 
 # Build SGD-only pretrained models
-adamw_pretrained_models = ArtifactSet.from_product(
+sgd_pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
-            'optimizer': ['adamw'],
-            'learning_rate': [3e-4],
-            'train_tokens': [8, 16],
-            'weight_decay': [0.1],
+            'optimizer': ['lionw'],
+            'learning_rate': [3.75e-5],
+            'train_tokens': [4, 8, 16, 32, 64],
+            'weight_decay': [0.7],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'scheduler_alpha_f': [0.1],
@@ -25,17 +25,17 @@ adamw_pretrained_models = ArtifactSet.from_product(
     )
 
 # Evaluations for SGD models
-adamw_model_evaluations = adamw_pretrained_models.map(lambda model: ModelEvaluation(model=model))
+sgd_model_evaluations = sgd_pretrained_models.map(lambda model: ModelEvaluation(model=model))
 
 # CPT stages for SGD models
-adamw_cpt_models = build_cpt_models(adamw_pretrained_models)
-adamw_cpt_model_evaluations = build_cpt_model_evaluations(adamw_cpt_models)
+sgd_cpt_models = build_cpt_models(sgd_pretrained_models)
+sgd_cpt_model_evaluations = build_cpt_model_evaluations(sgd_cpt_models)
 
 
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting'
+    'conda activate olmo'
 ])
 
 # Create executor
@@ -45,12 +45,12 @@ executor = SlurmExecutor(
 
 
 # Stage SGD pretraining and evaluations
-executor.stage('adamw_pretrain', adamw_pretrained_models)
-executor.stage('adamw_eval', adamw_model_evaluations)
+executor.stage('lionw_pretrain', sgd_pretrained_models)
+executor.stage('lionw_eval', sgd_model_evaluations)
 
 # Stage CPT and its evaluations
-executor.stage('adamw_cpt', adamw_cpt_models)
-executor.stage('adamw_cpt_eval', adamw_cpt_model_evaluations)
+executor.stage('lionw_cpt', sgd_cpt_models)
+executor.stage('lionw_cpt_eval', sgd_cpt_model_evaluations)
 
 
 if __name__ == '__main__':
