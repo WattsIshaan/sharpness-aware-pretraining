@@ -15,15 +15,14 @@ muon_pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
             'optimizer': ['muon'],
-            'muon_learning_rate': [5e-2, 5e-3, 5e-4, 5e-5],
             'muon_momentum' : [0.95],
             'muon_weight_decay': 0.1,
-            'train_tokens': [4,8,16,32,64],
+            'train_tokens': [4, 8, 16, 32, 64],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'scheduler_alpha_f': [0.1],
             'pretrain_gpus' : 4,
-            'learning_rate': 3e-4,
+            'learning_rate': [2e-2, 2e-3, 3e-4, 4e-5],
             'weight_decay': 0.1,
         }
     )

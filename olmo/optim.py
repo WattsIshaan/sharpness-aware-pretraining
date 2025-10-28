@@ -1419,6 +1419,7 @@ def fix_optim_state_dict(optimizer: Optimizer, state_dict: Dict[str, Any]) -> Di
 def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
     param_groups = get_param_groups(cfg, model)
     log.info(f"Constructing optimizer with {len(param_groups)} param groups")
+    log.info(f"Constructing optimizer with name {cfg.optimizer.name}")
     if cfg.optimizer.name == OptimizerType.lionw:
         return LionW(
             param_groups,
@@ -1473,27 +1474,28 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             ),
             rho=cfg.optimizer.sam_rho,
         )
-        elif cfg.optimizer.name == OptimizerType.muon:
-            param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
-            return Muon(
-                base_optimizer=AdamW(
-                    param_groups,
-                    lr=cfg.optimizer.learning_rate,
-                    betas=cfg.optimizer.betas,
-                    weight_decay=cfg.optimizer.weight_decay,
-                    record_update_metrics=cfg.optimizer.record_update_metrics,
-                    selective_updates=cfg.optimizer.selective_updates,
-                    eps=cfg.optimizer.eps,
-                ),
-                params=muon_param_groups,
-                lr=cfg.optimizer.muon_learning_rate,
-                weight_decay=cfg.optimizer.muon_weight_decay,
-                momentum=cfg.optimizer.muon_momentum,
+    elif cfg.optimizer.name == OptimizerType.muon:
+        log.info(f"Doing muon")
+        param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
+        return Muon(
+            base_optimizer=AdamW(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                betas=cfg.optimizer.betas,
+                weight_decay=cfg.optimizer.weight_decay,
                 record_update_metrics=cfg.optimizer.record_update_metrics,
                 selective_updates=cfg.optimizer.selective_updates,
-            )
-        else:
-            raise NotImplementedError
+                eps=cfg.optimizer.eps,
+            ),
+            params=muon_param_groups,
+            lr=cfg.optimizer.learning_rate,
+            weight_decay=cfg.optimizer.muon_weight_decay,
+            momentum=cfg.optimizer.muon_momentum,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
+        )
+    else: 
+        raise NotImplementedError
 
 
 def build_scheduler(cfg: TrainConfig, sched_cfg: Optional[SchedulerConfig] = None) -> Scheduler:
