@@ -62,6 +62,7 @@ class PretrainedModel(Artifact):
 
         final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
         if self.optimizer == 'sam':
+            final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
             final_run_name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
         if self.optimizer =='muon':
             final_run_name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
@@ -77,18 +78,25 @@ class PretrainedModel(Artifact):
     
     def get_requirements(self):
         return {
-            'gpus': self.pretrain_gpus,
+            # 'gpus': self.pretrain_gpus,
+            'gpus':f"A100_40GB:{self.pretrain_gpus}", 
             'nodes': 1,
             'cpus': max(1, self.pretrain_gpus * 2),
-            'mem': '32GB',
-            'requeue': True
+            'mem': '64GB',
+            # 'partition': 'preempt',
+            'requeue': True,
+            # 'partition': "flame-earlybirds"
         }
     
     def construct(self, builder: Task):
-        local_data_path = G.get_random_local_path()
+        local_output_path = G.get_random_local_path()
+        local_data_path = G.LOCAL_DATA_PATH
 
+        if G.DOWNLOAD_DATA:
+            local_data_path = local_output_path
+            
         run_name = self.run_name
-        save_folder = os.path.join(local_data_path, self.relpath)
+        save_folder = os.path.join(local_output_path, self.relpath)
         gs_path: str = cast(str, G.GS_PATH)
         remote_folder = os.path.join(gs_path, self.relpath)
         
@@ -129,7 +137,7 @@ class PretrainedModel(Artifact):
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=64,
+            device_train_microbatch_size=32,
             eval_interval=5000,
             save_interval_unsharded=5000,
             wandb_project=project_name,
@@ -166,10 +174,11 @@ class PretrainedModel(Artifact):
             all_data_paths.extend(eval_paths)
         
         # Download directories from GS
-        for local_dir in all_data_paths:
-            gs_data_path: str = cast(str, G.GS_DATA_PATH)
-            gs_dir = local_dir.replace(local_data_path, gs_data_path)
-            builder.download_from_gs(gs_dir, local_dir, directory=False)
+        if G.DOWNLOAD_DATA:
+            for local_dir in all_data_paths:
+                gs_data_path: str = cast(str, G.GS_DATA_PATH)
+                gs_dir = local_dir.replace(local_data_path, gs_data_path)
+                builder.download_from_gs(gs_dir, local_dir, directory=False)
         
         # Setup OLMo environment and run training
         olmo_path: str = cast(str, G.OLMO_PATH)

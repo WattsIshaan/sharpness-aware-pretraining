@@ -7,57 +7,24 @@ import random
 import string
 import json
 from typing import Optional, Set, cast
+from experiments import Project
 
 # Module variables are declared but uninitialized until load_project is called.
-CHECK_EXISTS_REMOTE: Optional[bool] = None
-WANDB_ENTITY: Optional[str] = None
-PROJECT_NAME: Optional[str] = None
-LOCAL_DATA_PATH: Optional[str] = None
-LOCAL_HF_PATH: Optional[str] = None
-CODE_PATH: Optional[str] = None
-OLMO_PATH: Optional[str] = None
-GS_PATH: Optional[str] = None
-GS_DATA_PATH: Optional[str] = None
+CHECK_EXISTS_REMOTE: Optional[bool] = Project.config.CHECK_EXISTS_REMOTE
+DOWNLOAD_DATA: Optional[bool] = Project.config.DOWNLOAD_DATA
+WANDB_ENTITY: Optional[str] = Project.config.WANDB_ENTITY
+PROJECT_NAME: Optional[str] = Project.config.PROJECT_NAME
+LOCAL_DATA_PATH: Optional[str] = Project.config.LOCAL_DATA_PATH
+LOCAL_OUTPUT_PATH: Optional[str] = Project.config.LOCAL_OUTPUT_PATH
+LOCAL_HF_PATH: Optional[str] = Project.config.LOCAL_HF_PATH
+CODE_PATH: Optional[str] = Project.config.CODE_PATH
+OLMO_PATH: Optional[str] = Project.config.OLMO_PATH
+GS_PATH: Optional[str] = Project.config.GS_PATH
+GS_DATA_PATH: Optional[str] = Project.config.GS_DATA_PATH
 
 
 # Cache for remote GS file list
 _remote_files_cache = None
-
-
-def load_project(project_name: str) -> None:
-    """Load project configuration strictly from ~/.experiments/project-config/{project_name}.json.
-    Raises FileNotFoundError if the config does not exist, or ValueError if required keys are missing.
-    """
-    global CHECK_EXISTS_REMOTE, WANDB_ENTITY, PROJECT_NAME, LOCAL_DATA_PATH, LOCAL_HF_PATH
-    global CODE_PATH, OLMO_PATH, GS_PATH, GS_DATA_PATH, _remote_files_cache
-
-    config_path = os.path.expanduser(f'~/.experiments/project-config/{project_name}.json')
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f'Project config not found: {config_path}')
-
-    with open(config_path, 'r') as f:
-        cfg = json.load(f)
-
-    required_keys = [
-        'CHECK_EXISTS_REMOTE', 'WANDB_ENTITY', 'PROJECT_NAME', 'LOCAL_DATA_PATH',
-        'LOCAL_HF_PATH', 'CODE_PATH', 'OLMO_PATH', 'GS_PATH', 'GS_DATA_PATH'
-    ]
-    missing = [k for k in required_keys if k not in cfg]
-    if missing:
-        raise ValueError(f'Missing required config keys in {config_path}: {missing}')
-
-    CHECK_EXISTS_REMOTE = bool(cfg['CHECK_EXISTS_REMOTE'])
-    WANDB_ENTITY = cfg['WANDB_ENTITY']
-    PROJECT_NAME = cfg['PROJECT_NAME']
-    LOCAL_DATA_PATH = cfg['LOCAL_DATA_PATH']
-    LOCAL_HF_PATH = cfg['LOCAL_HF_PATH']
-    CODE_PATH = cfg['CODE_PATH']
-    OLMO_PATH = cfg['OLMO_PATH']
-    GS_PATH = cfg['GS_PATH']
-    GS_DATA_PATH = cfg['GS_DATA_PATH']
-
-    # Reset remote files cache on project switch
-    _remote_files_cache = None
 
 
 def get_remote_files() -> Set[str]:
@@ -98,7 +65,7 @@ def get_remote_files() -> Set[str]:
     return _remote_files_cache
 
 def get_random_local_path() -> str:
-    if LOCAL_DATA_PATH is None:
+    if LOCAL_OUTPUT_PATH is None:
         raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
-    local_data_path: str = cast(str, LOCAL_DATA_PATH)
-    return os.path.join(local_data_path, ''.join(random.choices(string.ascii_letters, k=8)))
+    local_output_path: str = cast(str, LOCAL_OUTPUT_PATH)
+    return os.path.join(local_output_path, ''.join(random.choices(string.ascii_letters, k=8)))

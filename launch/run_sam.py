@@ -1,8 +1,8 @@
 """SAM pretraining and evaluation runner."""
 
 # 1) Load project configuration as early as possible
-from launch import globals as G
-G.load_project('sam-ablation')
+from experiments import Project
+Project.init('sam-ablation')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
@@ -15,13 +15,14 @@ sam_pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
             'optimizer': ['sam'],
-            'learning_rate': [5e-4, 1e-3, 5e-3, 1e-2],
-            'train_tokens': [1, 4],
-            'weight_decay': [0.02],
+            'learning_rate': [3e-4],
+            'train_tokens': [32, 16, 8],
+            'weight_decay': [0.1],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
-            'sam_rho': [0.05, 0.1, 0.2],
+            'sam_rho': [0.05],
             'scheduler_alpha_f': [0.1],
+            'sam_base_optimizer': ['adamw'],
         }
     )
 
@@ -36,14 +37,11 @@ sam_cpt_model_evaluations = build_cpt_model_evaluations(sam_cpt_models)
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting'
+    'conda activate olmo'
 ])
 
 # Create executor
 executor = SlurmExecutor(
-    project=G.PROJECT_NAME,
-    artifact_path=G.LOCAL_DATA_PATH,
-    code_path=G.CODE_PATH,
     setup_command=setup_command,
 )
 

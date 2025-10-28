@@ -1,8 +1,8 @@
 """Muon (SGD-only) pretraining and evaluation runner."""
 
 # 1) Load project configuration as early as possible
-from launch import globals as G
-G.load_project('sgd-gridsearch')
+from experiments import Project
+Project.init('sgd-gridsearch')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
@@ -15,8 +15,8 @@ sgd_pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
             'optimizer': ['sgd'],
-            'learning_rate': [0.3 ,1],
-            'train_tokens': [8, 16],
+            'learning_rate': [0.5],
+            'train_tokens': [64],
             'weight_decay': [1e-5],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
@@ -35,14 +35,11 @@ sgd_cpt_model_evaluations = build_cpt_model_evaluations(sgd_cpt_models)
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting'
+    'conda activate olmo'
 ])
 
 # Create executor
 executor = SlurmExecutor(
-    project=G.PROJECT_NAME,
-    artifact_path=G.LOCAL_DATA_PATH,
-    code_path=G.CODE_PATH,
     setup_command=setup_command,
 )
 
