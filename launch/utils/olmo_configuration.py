@@ -154,7 +154,7 @@ def get_train_config(
             'metrics_log_interval': 10,
             'momentum': momentum,
             'sam_rho': sam_rho,
-            'sam_base_optimizer': sam_base_optimizer,,
+            'sam_base_optimizer': sam_base_optimizer,
             'muon_learning_rate': muon_learning_rate, #EDIT
             'muon_momentum': muon_momentum,
             'muon_weight_decay': muon_weight_decay,
