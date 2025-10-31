@@ -6,11 +6,24 @@ from experiments import Artifact, Task  # type: ignore
 from launch import globals as G
 from launch.utils.olmo_configuration import get_train_config
 import math
+import logging
 
-LIST_OF_PRETRAIN_FILES = [
-    f'datasets/c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy'
-    for i in range(0, 171)
-]
+log = logging.getLogger(__name__)
+
+LIST_OF_PRETRAIN_FILES = {
+    "c4": {
+        "data_paths" : [f'datasets/c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(0, 171)],
+        "tokens_per_file" : 750_000_000
+    },
+    "dclm" : {
+        "data_paths" : [
+            f'datasets/dclm/train/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-{i:03d}-{j:05d}.npy'
+            for i in range(0, 5)   # 000 to 004
+            for j in range(0, 60)  # 00000 to 00059
+        ],
+        "tokens_per_file" : 3_000_000_000
+    }
+}
 
 LIST_OF_CPT_FILES= {
     "starcoder" : [
@@ -20,12 +33,22 @@ LIST_OF_CPT_FILES= {
 
 LIST_OF_VAL_FILES = {
     "c4-validation": ['datasets/c4/val/eval-data_perplexity_v3_small_gptneox20b_c4_en_val_part-0-00000.npy'],
-    "starcoder-validation": ['datasets/starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy']
+    "starcoder-validation": ['datasets/starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy'],
+    "dclm-validation": ['datasets/dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-2M.npy']
 }
 
-def get_train_files(n_tokens, tokens_per_file=750_000_000):
-    n_files = min(math.ceil(n_tokens*1024*1024*1024 / tokens_per_file) + 1, len(LIST_OF_PRETRAIN_FILES))
-    return LIST_OF_PRETRAIN_FILES[:n_files]
+BILLION = 1024**3
+MILLION = 1024**2
+
+def get_train_files(dataset_name, n_tokens):
+
+    dataset_info = LIST_OF_PRETRAIN_FILES[dataset_name]
+    tokens_per_file = dataset_info["tokens_per_file"]
+    data_paths = dataset_info["data_paths"]
+
+    n_files = min(math.ceil(n_tokens*BILLION / tokens_per_file) + 1, len(LIST_OF_PRETRAIN_FILES))
+    log.info(f"Downloading {n_files} files from {dataset_name.upper()}")
+    return data_paths[:n_files]
 
 
 @dataclass(frozen=True)
@@ -43,6 +66,7 @@ class PretrainedModel(Artifact):
     muon_learning_rate: float = 5e-1 #EDIT
     muon_momentum: float = 0.95
     muon_weight_decay: float = 0.1
+    train_dataset: str = "dclm"
  
     
     @property
@@ -99,7 +123,7 @@ class PretrainedModel(Artifact):
         
         # Build training data paths from the training_data artifact set
         train_data_paths = []
-        for train_data_path in get_train_files(self.train_tokens):
+        for train_data_path in get_train_files(self.train_dataset, self.train_tokens):
             train_data_paths.append(
                 os.path.join(local_data_path, train_data_path)
             )
