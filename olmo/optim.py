@@ -853,21 +853,24 @@ class Muon(Optimizer):
         record_update_metrics: bool = False,
         selective_updates: bool = False,
     ):
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
-        #assert isinstance(params, list) and len(params) >= 1 and isinstance(params[0], torch.nn.Parameter)
+
         for group in params:
             group["params"] = sorted(group["params"], key=lambda x: x.size(), reverse=True)
-            print(f"Keys: {group.keys()}")
+            group["lr"] = lr
+            group["weight_decay"] = weight_decay
+            group["momentum"] = momentum
+
+        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
         super().__init__(params, defaults)
+
 
         self.base_optimizer = base_optimizer
         self._record_update_metrics = record_update_metrics
         self._collecting_metrics = False
 
-        # Buffers for metrics
-        self._step_size_param_names: Optional[List[str]] = None
-        self._step_size_norms: Optional[List[torch.Tensor]] = None
-        self._step_size_maxs: Optional[List[torch.Tensor]] = None
+        self._step_size_param_names = None
+        self._step_size_norms = None
+        self._step_size_maxs = None
 
     def _zeropower_via_newtonschulz5(self, G, steps: int):
         """
@@ -921,6 +924,7 @@ class Muon(Optimizer):
         step_size_maxs = []
 
         for group in self.param_groups:
+            
             lr = group["lr"]
             momentum = group["momentum"]
             weight_decay = group["weight_decay"]
@@ -1472,28 +1476,28 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
                 eps=cfg.optimizer.eps,
             ),
             rho=cfg.optimizer.sam_rho,
-        )
-        elif cfg.optimizer.name == OptimizerType.muon:
-            param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
-            return Muon(
-                base_optimizer=AdamW(
-                    param_groups,
-                    lr=cfg.optimizer.learning_rate,
-                    betas=cfg.optimizer.betas,
-                    weight_decay=cfg.optimizer.weight_decay,
-                    record_update_metrics=cfg.optimizer.record_update_metrics,
-                    selective_updates=cfg.optimizer.selective_updates,
-                    eps=cfg.optimizer.eps,
-                ),
-                params=muon_param_groups,
-                lr=cfg.optimizer.muon_learning_rate,
-                weight_decay=cfg.optimizer.muon_weight_decay,
-                momentum=cfg.optimizer.muon_momentum,
+    )
+    elif cfg.optimizer.name == OptimizerType.muon:
+        param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
+        return Muon(
+            base_optimizer=AdamW(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                betas=cfg.optimizer.betas,
+                weight_decay=cfg.optimizer.weight_decay,
                 record_update_metrics=cfg.optimizer.record_update_metrics,
                 selective_updates=cfg.optimizer.selective_updates,
-            )
-        else:
-            raise NotImplementedError
+                eps=cfg.optimizer.eps,
+            ),
+            params=muon_param_groups,
+            lr=cfg.optimizer.muon_learning_rate,
+            weight_decay=cfg.optimizer.muon_weight_decay,
+            momentum=cfg.optimizer.muon_momentum,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
+        )
+    else:
+        raise NotImplementedError
 
 
 def build_scheduler(cfg: TrainConfig, sched_cfg: Optional[SchedulerConfig] = None) -> Scheduler:

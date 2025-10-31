@@ -44,7 +44,7 @@ from .data import IterableDataset
 from .eval import Evaluator
 from .exceptions import OLMoConfigurationError
 from .model import OLMo
-from .optim import Optimizer, Scheduler, SAM
+from .optim import Optimizer, Scheduler, SAM, Muon
 from .torch_util import (
     SingleAccelerator,
     barrier,
@@ -59,13 +59,13 @@ from .torch_util import (
 )
 from .util import upload, run_sync_cmd
 
-from experiments.runlib import {
+from experiments.runlib import (
     get_project_config,
     get_relpath,
     upload_to_gs,
     check_exists_gs,
     download_from_gs
-}
+)
 
 __all__ = ["SpeedMonitor", "LRMonitor", "Trainer"]
 
@@ -415,14 +415,30 @@ class Trainer:
 
         # Reset learning rate and weight decay to the values from the config, not the checkpoint.
         log.info("Resetting learning rate...")
+
         new_learning_rate = self.scheduler.get_lr(
             self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
         )
-        for group in self.optim.param_groups:
-            group["lr"] = new_learning_rate
-            group["initial_lr"] = self.cfg.optimizer.learning_rate
+
+        if(isinstance(self.optim, Muon)):
+            new_muon_learning_rate = new_learning_rate = self.scheduler.get_lr(
+            self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
+        )
+            for group in self.optim.param_groups:
+                if(group["use_muon"]):
+                    group["lr"] = new_muon_learning_rate
+                    group["initial_lr"] = self.cfg.optimizer.muon_learning_rate
+                else:
+                    group["lr"] = new_learning_rate
+                    group["initial_lr"] = self.cfg.optimizer.learning_rate
             if "weight_decay" in group and group["weight_decay"] > 0.0:
                 group["weight_decay"] = self.cfg.optimizer.weight_decay
+        else:
+            for group in self.optim.param_groups:
+                group["lr"] = new_learning_rate
+                group["initial_lr"] = self.cfg.optimizer.learning_rate
+                if "weight_decay" in group and group["weight_decay"] > 0.0:
+                    group["weight_decay"] = self.cfg.optimizer.weight_decay
 
         # RNG states.
         if "rng" in state_dict and state_dict.get("world_size", get_world_size()) == get_world_size():
@@ -500,8 +516,11 @@ class Trainer:
             gs_path = get_project_config().GS_PATH
             rel_path = get_relpath()
 
+
+
             if (gs_path != None and rel_path != None):
-                remote_path = os.path.join(gs_path, rel_path, checkpoint_dir)
+                remote_path = os.path.join(gs_path, rel_path, checkpoint_name)
+                print(f'Remote Path: {remote_path}')
 
                 if get_global_rank() == 0:
                     upload_to_gs(checkpoint_dir, remote_path, directory=True, concurrent = True, ensure_contents=True,retry=3 )
@@ -901,9 +920,14 @@ class Trainer:
             # TODO (epwalsh): if we want to enable different LRs or gradient clipping settings per group
             # we should pass `group["initial_lr"]` or `group["initial_max_grad_norm"]` here instead of
             # the corresponding values from `self.cfg`.
-            group["lr"] = self.scheduler.get_lr(
-                self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
+            if (isinstance(self.optim, Muon)):
+                group["lr"] = self.scheduler.get_lr(
+                self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
             )
+            else:
+                group["lr"] = self.scheduler.get_lr(
+                    self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
+                )
             group["max_grad_norm"] = self.scheduler.get_max_grad_norm(
                 self.cfg.max_grad_norm, self.scheduler_current, self.scheduler_max
             )
