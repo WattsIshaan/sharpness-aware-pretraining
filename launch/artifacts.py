@@ -46,7 +46,7 @@ def get_train_files(dataset_name, n_tokens):
     tokens_per_file = dataset_info["tokens_per_file"]
     data_paths = dataset_info["data_paths"]
 
-    n_files = min(math.ceil(n_tokens*BILLION / tokens_per_file) + 1, len(LIST_OF_PRETRAIN_FILES))
+    n_files = min(math.ceil(n_tokens*BILLION / tokens_per_file) + 1, len(data_paths))
     log.info(f"Downloading {n_files} files from {dataset_name.upper()}")
     return data_paths[:n_files]
 
