@@ -6,12 +6,24 @@ from experiments import Artifact, Task, Project  # type: ignore
 from launch import globals as G
 from launch.utils.olmo_configuration import get_train_config
 import math
+import logging
 
+log = logging.getLogger(__name__)
 
-LIST_OF_PRETRAIN_FILES = [
-    f'datasets/c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy'
-    for i in range(0, 171)
-]
+LIST_OF_PRETRAIN_FILES = {
+    "c4": {
+        "data_paths" : [f'datasets/c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(0, 171)],
+        "tokens_per_file" : 750_000_000
+    },
+    "dclm" : {
+        "data_paths" : [
+            f'datasets/dclm/train/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-{i:03d}-{j:05d}.npy'
+            for i in range(0, 5)   # 000 to 004
+            for j in range(0, 60)  # 00000 to 00059
+        ],
+        "tokens_per_file" : 3_000_000_000
+    }
+}
 
 LIST_OF_CPT_FILES= {
     "starcoder" : [
@@ -21,12 +33,22 @@ LIST_OF_CPT_FILES= {
 
 LIST_OF_VAL_FILES = {
     "c4-validation": ['datasets/c4/val/eval-data_perplexity_v3_small_gptneox20b_c4_en_val_part-0-00000.npy'],
-    "starcoder-validation": ['datasets/starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy']
+    "starcoder-validation": ['datasets/starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy'],
+    "dclm-validation": ['datasets/dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-2M.npy']
 }
 
-def get_train_files(n_tokens, tokens_per_file=750_000_000):
-    n_files = min(math.ceil(n_tokens*1024*1024*1024 / tokens_per_file) + 1, len(LIST_OF_PRETRAIN_FILES))
-    return LIST_OF_PRETRAIN_FILES[:n_files]
+BILLION = 1024**3
+MILLION = 1024**2
+
+def get_train_files(dataset_name, n_tokens):
+
+    dataset_info = LIST_OF_PRETRAIN_FILES[dataset_name]
+    tokens_per_file = dataset_info["tokens_per_file"]
+    data_paths = dataset_info["data_paths"]
+
+    n_files = min(math.ceil(n_tokens*BILLION / tokens_per_file) + 1, len(data_paths))
+    log.info(f"Downloading {n_files} files from {dataset_name.upper()}")
+    return data_paths[:n_files]
 
 
 @dataclass(frozen=True)
@@ -40,10 +62,11 @@ class PretrainedModel(Artifact):
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
-    pretrain_gpus: int = 2
-    muon_learning_rate: float = 5e-1, #EDIT
-    muon_momentum: float = 0.95,
-    muon_weight_decay: float = 0.1,
+    pretrain_gpus: int = 4
+    muon_learning_rate: float = 5e-1 #EDIT
+    muon_momentum: float = 0.95
+    muon_weight_decay: float = 0.1
+    train_dataset: str = "dclm"
  
     
     @property
@@ -63,6 +86,7 @@ class PretrainedModel(Artifact):
 
         final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
         if self.optimizer == 'sam':
+            final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
             final_run_name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
         if self.optimizer =='muon':
             final_run_name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
@@ -78,24 +102,28 @@ class PretrainedModel(Artifact):
     
     def get_requirements(self):
         return {
-            'gpus': self.pretrain_gpus,
+            'gpus':f"A100_40GB:{self.pretrain_gpus}", 
             'nodes': 1,
             'cpus': max(1, self.pretrain_gpus * 2),
-            'mem': '128GB',
-            'requeue': True
+            'mem': '64GB',
+            'requeue': True,
         }
     
     def construct(self, builder: Task):
-        local_data_path = G.get_random_local_path()
+        local_output_path = G.get_random_local_path()
+        local_data_path = G.LOCAL_DATA_PATH
 
+        if G.DOWNLOAD_DATA:
+            local_data_path = local_output_path
+            
         run_name = self.run_name
-        save_folder = os.path.join(local_data_path, self.relpath)
-        gs_path: str = cast(str, Project.config.GS_PATH)
+        save_folder = os.path.join(local_output_path, self.relpath)
+        gs_path: str = cast(str, G.GS_PATH)
         remote_folder = os.path.join(gs_path, self.relpath)
         
         # Build training data paths from the training_data artifact set
         train_data_paths = []
-        for train_data_path in get_train_files(self.train_tokens):
+        for train_data_path in get_train_files(self.train_dataset, self.train_tokens):
             train_data_paths.append(
                 os.path.join(local_data_path, train_data_path)
             )
@@ -167,10 +195,11 @@ class PretrainedModel(Artifact):
             all_data_paths.extend(eval_paths)
         
         # Download directories from GS
-        for local_dir in all_data_paths:
-            gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
-            gs_dir = local_dir.replace(local_data_path, gs_data_path)
-            builder.download_from_gs(gs_dir, local_dir, directory=False)
+        if G.DOWNLOAD_DATA:
+            for local_dir in all_data_paths:
+                gs_data_path: str = cast(str, G.GS_DATA_PATH)
+                gs_dir = local_dir.replace(local_data_path, gs_data_path)
+                builder.download_from_gs(gs_dir, local_dir, directory=False)
         
         # Setup OLMo environment and run training
         olmo_path: str = cast(str, Project.config.OLMO_PATH)
@@ -232,6 +261,7 @@ class CPTModel(Artifact):
 
     def get_requirements(self):
         return {
+            'gpus':f"A100_40GB:{self.cpt_gpus}",
             'nodes': 1,
             'cpus': self.cpt_gpus * 2,
             'mem': '64GB',
@@ -351,7 +381,7 @@ class ModelEvaluation(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus': 8,
+            'gpus':f"A100_40GB:1",
             'nodes': 1,
             'cpus': 2,
             'mem': '16GB',

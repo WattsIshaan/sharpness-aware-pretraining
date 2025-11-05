@@ -14,10 +14,10 @@ from launch.cpt import build_cpt_models, build_cpt_model_evaluations
 sgd_pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
-            'optimizer': ['sgd'],
-            'learning_rate': [0.5],
-            'train_tokens': [64],
-            'weight_decay': [1e-5],
+            'optimizer': ['lionw'],
+            'learning_rate': [3.75e-5],
+            'train_tokens': [4, 8, 16, 32, 64],
+            'weight_decay': [0.7],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'scheduler_alpha_f': [0.1],
@@ -45,12 +45,12 @@ executor = SlurmExecutor(
 
 
 # Stage SGD pretraining and evaluations
-executor.stage('sgd_pretrain', sgd_pretrained_models)
-executor.stage('sgd_eval', sgd_model_evaluations)
+executor.stage('lionw_pretrain', sgd_pretrained_models)
+executor.stage('lionw_eval', sgd_model_evaluations)
 
 # Stage CPT and its evaluations
-# executor.stage('sgd_cpt', sgd_cpt_models)
-# executor.stage('sgd_cpt_eval', sgd_cpt_model_evaluations)
+executor.stage('lionw_cpt', sgd_cpt_models)
+executor.stage('lionw_cpt_eval', sgd_cpt_model_evaluations)
 
 
 if __name__ == '__main__':

@@ -1,8 +1,8 @@
 """Muon (SGD-only) pretraining and evaluation runner."""
 
 # 1) Load project configuration as early as possible
-from launch import globals as G
-G.load_project('sgd-gridsearch')
+from experiments import Project
+Project.init('sgd-gridsearch')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
@@ -40,9 +40,6 @@ setup_command = ' && '.join([
 
 # Create executor
 executor = SlurmExecutor(
-    project=G.PROJECT_NAME,
-    artifact_path=G.LOCAL_DATA_PATH,
-    code_path=G.CODE_PATH,
     setup_command=setup_command,
 )
 
@@ -52,8 +49,8 @@ executor.stage('adamw_pretrain', adamw_pretrained_models)
 executor.stage('adamw_eval', adamw_model_evaluations)
 
 # Stage CPT and its evaluations
-# executor.stage('adamw_cpt', adamw_cpt_models)
-# executor.stage('adamw_cpt_eval', adamw_cpt_model_evaluations)
+executor.stage('adamw_cpt', adamw_cpt_models)
+executor.stage('adamw_cpt_eval', adamw_cpt_model_evaluations)
 
 
 if __name__ == '__main__':

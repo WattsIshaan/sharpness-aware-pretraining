@@ -9,11 +9,22 @@ import json
 from typing import Optional, Set, cast
 from experiments import Project
 
+# Module variables are declared but uninitialized until load_project is called.
+CHECK_EXISTS_REMOTE: Optional[bool] = Project.config.CHECK_EXISTS_REMOTE
+DOWNLOAD_DATA: Optional[bool] = Project.config.DOWNLOAD_DATA
+WANDB_ENTITY: Optional[str] = Project.config.WANDB_ENTITY
+PROJECT_NAME: Optional[str] = Project.config.PROJECT_NAME
+LOCAL_DATA_PATH: Optional[str] = Project.config.LOCAL_DATA_PATH
+LOCAL_OUTPUT_PATH: Optional[str] = Project.config.LOCAL_OUTPUT_PATH
+LOCAL_HF_PATH: Optional[str] = Project.config.LOCAL_HF_PATH
+CODE_PATH: Optional[str] = Project.config.CODE_PATH
+OLMO_PATH: Optional[str] = Project.config.OLMO_PATH
+GS_PATH: Optional[str] = Project.config.GS_PATH
+GS_DATA_PATH: Optional[str] = Project.config.GS_DATA_PATH
+
 
 # Cache for remote GS file list
 _remote_files_cache = None
-
-
 
 
 def get_remote_files() -> Set[str]:
@@ -54,7 +65,7 @@ def get_remote_files() -> Set[str]:
     return _remote_files_cache
 
 def get_random_local_path() -> str:
-    if Project.config.LOCAL_DATA_PATH is None:
+    if LOCAL_OUTPUT_PATH is None:
         raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
-    local_data_path: str = cast(str, Project.config.LOCAL_DATA_PATH)
-    return os.path.join(local_data_path, ''.join(random.choices(string.ascii_letters, k=8)))
+    local_output_path: str = cast(str, LOCAL_OUTPUT_PATH)
+    return os.path.join(local_output_path, ''.join(random.choices(string.ascii_letters, k=8)))

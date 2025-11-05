@@ -1423,6 +1423,7 @@ def fix_optim_state_dict(optimizer: Optimizer, state_dict: Dict[str, Any]) -> Di
 def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
     param_groups = get_param_groups(cfg, model)
     log.info(f"Constructing optimizer with {len(param_groups)} param groups")
+    log.info(f"Constructing optimizer with name {cfg.optimizer.name}")
     if cfg.optimizer.name == OptimizerType.lionw:
         return LionW(
             param_groups,
