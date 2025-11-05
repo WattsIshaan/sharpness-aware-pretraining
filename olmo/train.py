@@ -1015,10 +1015,18 @@ class Trainer:
 
     def log_metrics_to_console(self, prefix: str, metrics: Dict[str, float]):
         def format_float(value: float) -> str:
+            if math.isnan(value):
+                return "nan"
+            if math.isinf(value):
+                return "inf"
+
             if value < 0.0001:
                 return str(value)  # scientific notation
             elif value > 1000:
-                return f"{int(value):,d}"
+                try:
+                    return f"{int(value):,d}"
+                except (OverflowError, ValueError):
+                    return f"{value:.1e}" 
             elif value > 100:
                 return f"{value:.1f}"
             elif value > 10:

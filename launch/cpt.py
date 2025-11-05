@@ -17,6 +17,7 @@ def build_cpt_models(pretrained_models: ArtifactSet) -> ArtifactSet:
                 batch_size=64,
                 scheduler_name='cosine_with_warmup',
                 scheduler_alpha_f=0.1,
+                cpt_gpus=1
             )
         )
     )

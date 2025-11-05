@@ -81,7 +81,7 @@ class PretrainedModel(Artifact):
             'gpus': self.pretrain_gpus,
             'nodes': 1,
             'cpus': max(1, self.pretrain_gpus * 2),
-            'mem': '32GB',
+            'mem': '128GB',
             'requeue': True
         }
     
@@ -130,9 +130,9 @@ class PretrainedModel(Artifact):
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=4,
-            eval_interval=1000,
-            save_interval_unsharded=5,
+            device_train_microbatch_size=32,
+            eval_interval=5000,
+            save_interval_unsharded=5000,
             wandb_project=project_name,
             wandb_entity=wandb_entity,
             wandb_id=run_name,
@@ -232,10 +232,10 @@ class CPTModel(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus': self.cpt_gpus,
             'nodes': 1,
             'cpus': self.cpt_gpus * 2,
-            'mem': '16GB',
+            'mem': '64GB',
+            'gres' : "gpu:1"
         }
 
     def construct(self, builder: Task):
@@ -351,7 +351,7 @@ class ModelEvaluation(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus': 1,
+            'gpus': 8,
             'nodes': 1,
             'cpus': 2,
             'mem': '16GB',
