@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Take the first N tokens from a uint16 memmap file and write them back as a new memmap.\n\n"
             "Example:\n"
-            "  python -m new_utils.split_dataset --input_path=/path/to/input.npy --output_path=/path/to/output_head.npy --num_tokens=1000000"
+            "  python new_utils/split_dataset.py --input_path=/path/to/input.npy --output_path=/path/to/output_head.npy --num_tokens=1000000"
         ),
     )
     parser.add_argument("--input_path", type=str, required=True, help="Path to input uint16 memmap file")
