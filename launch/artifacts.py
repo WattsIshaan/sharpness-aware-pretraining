@@ -12,30 +12,66 @@ log = logging.getLogger(__name__)
 
 LIST_OF_PRETRAIN_FILES = {
     "c4": {
-        "data_paths" : [f'datasets/c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(0, 171)],
-        "tokens_per_file" : 750_000_000
+        "data_paths" : [f'c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(0, 171)],
+        "tokens_per_file" : 750_000_000,
+        "val" : {
+            "c4-validation": ['c4/val/eval-data_perplexity_v3_small_gptneox20b_c4_en_val_part-0-00000.npy'],
+        }
     },
     "dclm" : {
         "data_paths" : [
-            f'datasets/dclm/train/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-{i:03d}-{j:05d}.npy'
-            for i in range(0, 5)   # 000 to 004
-            for j in range(0, 60)  # 00000 to 00059
+            f'dclm/train/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-{i:03d}/{j:05d}.npy'
+            for i in range(0, 60)
+            for j in range(0, 5) 
         ],
-        "tokens_per_file" : 3_000_000_000
+        "tokens_per_file" : 3_000_000_000,
+        "val" : {
+            "dclm-validation": ['dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-2M.npy'],
+            "c4-validation": ['c4/val/eval-data_perplexity_v3_small_dolma2-tokenizer_c4_en_val_part-0-00000.npy'],
+        }
     }
 }
 
 LIST_OF_CPT_FILES= {
-    "starcoder" : [
-        "datasets/starcoder/train/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00000.npy"
-    ]
+    "c4" : {
+        "starcoder" : {
+            "data_paths" : [
+                "starcoder/train/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00000.npy"
+            ],
+            "val" : {
+                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy'],
+            }
+        },
+    },
+    "dclm" : {
+        "starcoder" : {
+            "data_paths" : [
+                "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-000-00000.npy"
+            ],
+            "val" : {
+                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-001-00000-2M.npy'],
+            }
+        },
+        "proofpile" : {
+            "data_paths" : [
+                "proofpile/train/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-00-00000.npy"
+            ],
+            "val" : {
+                "proofpile-validation": ['proofpile/val/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-01-00000-2M.npy'],
+            }
+        }
+    }
 }
 
-LIST_OF_VAL_FILES = {
-    "c4-validation": ['datasets/c4/val/eval-data_perplexity_v3_small_gptneox20b_c4_en_val_part-0-00000.npy'],
-    "starcoder-validation": ['datasets/starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy'],
-    "dclm-validation": ['datasets/dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-2M.npy']
-}
+for train_dataset in LIST_OF_PRETRAIN_FILES.keys():
+
+    val_dataset = LIST_OF_PRETRAIN_FILES[train_dataset]["val"]
+    cpt_datasets = LIST_OF_CPT_FILES[train_dataset]
+
+    for cpt_dataset in cpt_datasets.keys():
+        cpt_datasets[cpt_dataset]["val"].update(val_dataset)
+
+    LIST_OF_CPT_FILES[train_dataset] = cpt_datasets
 
 BILLION = 1024**3
 MILLION = 1024**2
@@ -54,6 +90,7 @@ def get_train_files(dataset_name, n_tokens):
 @dataclass(frozen=True)
 class PretrainedModel(Artifact):
     train_tokens: int
+    model_size: str = '20m'
     optimizer: str = 'adamw'
     learning_rate: float = 6e-4
     weight_decay: float = 0.1
@@ -62,7 +99,7 @@ class PretrainedModel(Artifact):
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
-    pretrain_gpus: int = 4
+    pretrain_gpus: int = 8
     muon_learning_rate: float = 5e-1 #EDIT
     muon_momentum: float = 0.95
     muon_weight_decay: float = 0.1
@@ -102,11 +139,16 @@ class PretrainedModel(Artifact):
     
     def get_requirements(self):
         return {
-            'gpus':f"A100_40GB:{self.pretrain_gpus}", 
+            # 'gpus': self.pretrain_gpus,
+            "gres": f"gpu:{self.pretrain_gpus}",
             'nodes': 1,
             'cpus': max(1, self.pretrain_gpus * 2),
             'mem': '64GB',
             'requeue': True,
+            'partition': 'flame',
+            'qos': 'flame-16gpu_qos',
+            'account': 'aditirag',
+            "time": "2-00:00:00"
         }
     
     def construct(self, builder: Task):
@@ -130,20 +172,31 @@ class PretrainedModel(Artifact):
         
         # Build eval datasets from validation_data
         eval_datasets = dict()
-        for eval_dataset in LIST_OF_VAL_FILES:
+        for eval_dataset in LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]:
             eval_datasets[eval_dataset] = [
                 os.path.join(local_data_path, eval_data_path)
-                for eval_data_path in LIST_OF_VAL_FILES[eval_dataset]
+                for eval_data_path in LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"][eval_dataset]
             ]
         
         # Create pretrain config using configuration utility
-        project_name: str = cast(str, Project.config.PROJECT_NAME)
-        wandb_entity: str = cast(str, Project.config.WANDB_ENTITY)
+        project_name: str = cast(str, G.PROJECT_NAME)
+        wandb_entity: str = cast(str, G.WANDB_ENTITY)
+
+        model_overrides = dict()
+        if self.train_dataset == "dclm":
+            model_overrides = {
+                'vocab_size': 100278,
+                'embedding_size': 100352,
+                'eos_token_id': 100257,
+                'pad_token_id': 100277,
+            }
+
         config = get_train_config(
             run_name=run_name,
             save_folder=save_folder,
             train_data_paths=train_data_paths,
             eval_datasets=eval_datasets,
+            model_size=self.model_size,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
@@ -155,10 +208,11 @@ class PretrainedModel(Artifact):
             max_duration=f"{self.train_tokens}e9T",
             stop_at=None,
             seed=6198,
+            model_overrides=model_overrides,
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=32,
+            device_train_microbatch_size=8,
             eval_interval=5000,
             save_interval_unsharded=5000,
             wandb_project=project_name,
@@ -167,6 +221,10 @@ class PretrainedModel(Artifact):
             wandb_resume='allow',
             try_load_latest_save=True,
             run_sync_cmd=True,
+            tokenizer={
+                'identifier': 'tokenizers/allenai_dolma2.json' if self.train_dataset=='dclm' else 'tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json',
+                'truncate_direction': 'right',
+            }
         )
         
         # Set SYNC_CMD environment variable
@@ -196,10 +254,20 @@ class PretrainedModel(Artifact):
         
         # Download directories from GS
         if G.DOWNLOAD_DATA:
-            for local_dir in all_data_paths:
-                gs_data_path: str = cast(str, G.GS_DATA_PATH)
+            # Extract unique parent directories to download
+            parent_dirs = set()
+            
+            for local_file_path in all_data_paths:
+                parent_dir = os.path.dirname(local_file_path)
+                parent_dirs.add(parent_dir)
+
+            print(parent_dirs)
+            
+            # Download each unique parent directory
+            gs_data_path: str = cast(str, G.GS_DATA_PATH)
+            for local_dir in parent_dirs:
                 gs_dir = local_dir.replace(local_data_path, gs_data_path)
-                builder.download_from_gs(gs_dir, local_dir, directory=False)
+                builder.download_from_gs(gs_dir, local_dir, directory=True)
         
         # Setup OLMo environment and run training
         olmo_path: str = cast(str, Project.config.OLMO_PATH)
@@ -261,7 +329,7 @@ class CPTModel(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus':f"A100_40GB:{self.cpt_gpus}",
+            'gpus': self.cpt_gpus,
             'nodes': 1,
             'cpus': self.cpt_gpus * 2,
             'mem': '64GB',
@@ -289,17 +357,16 @@ class CPTModel(Artifact):
         )
 
         # Build training data paths from the training_data artifact
-        train_data_paths = [
-            os.path.join(local_data_path, cpt_data_path)
-            for cpt_data_path in LIST_OF_CPT_FILES[self.training_dataset_name]
-        ]
+        train_data_paths = []
+        for cpt_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.training_dataset_name]["data_paths"]:
+            train_data_paths.append(os.path.join(local_data_path, cpt_data_path))
         
         # Build eval datasets from validation_data
         eval_datasets = dict()
-        for eval_dataset in LIST_OF_VAL_FILES:
+        for eval_dataset in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.training_dataset_name]["val"]:
             eval_datasets[eval_dataset] = [
                 os.path.join(local_data_path, eval_data_path)
-                for eval_data_path in LIST_OF_VAL_FILES[eval_dataset]
+                for eval_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.training_dataset_name]["val"][eval_dataset]
             ]
 
         project_name: str = cast(str, Project.config.PROJECT_NAME)
@@ -318,7 +385,7 @@ class CPTModel(Artifact):
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=64,
+            device_train_microbatch_size=4,
             eval_interval=100,
             save_interval_unsharded=1000,
             wandb_project=project_name,
@@ -326,7 +393,8 @@ class CPTModel(Artifact):
             wandb_id=run_name,
             wandb_resume='allow',
             load_path=pretrained_model_path,
-            reset_optimizer_state=True
+            reset_optimizer_state=True,
+            tokenizer='tokenizers/allenai_dolma2.json' if self.pretrained_model.train_dataset=='dclm' else 'tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json'
         )
 
         # Ensure directory and save config
@@ -381,7 +449,7 @@ class ModelEvaluation(Artifact):
 
     def get_requirements(self):
         return {
-            'gpus':f"A100_40GB:1",
+            'gpus':1,
             'nodes': 1,
             'cpus': 2,
             'mem': '16GB',
@@ -413,10 +481,17 @@ class ModelEvaluation(Artifact):
 
         # Collect and download evaluation data files
         local_eval_paths = []
-        for eval_paths in LIST_OF_VAL_FILES.values():
-            for eval_path in eval_paths:
-                local_eval_path = os.path.join(local_root, eval_path)
-                local_eval_paths.append(local_eval_path)
+        if isinstance(self.model, PretrainedModel):
+            for eval_dataset in LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"]:
+                for eval_path in LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"][eval_dataset]:
+                    local_eval_path = os.path.join(local_root, eval_path)
+                    local_eval_paths.append(local_eval_path)
+        elif isinstance(self.model, CPTModel):
+            for eval_dataset in LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.training_dataset_name]["val"]:
+                for eval_path in LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.training_dataset_name]["val"][eval_dataset]:
+                    local_eval_path = os.path.join(local_root, eval_path)
+                    local_eval_paths.append(local_eval_path)
+
         # Download each eval file from GS_DATA_PATH mirror
         for local_path in local_eval_paths:
             gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)

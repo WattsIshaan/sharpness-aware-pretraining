@@ -1,12 +1,47 @@
 """OLMo model configuration utilities."""
 
 
-def get_base_model_config():
+def get_20m_base_model_config():
     """Return the base model configuration shared by pretrain and CPT."""
     return {
         'd_model': 256,
         'n_heads': 8,
         'n_layers': 8,
+        'mlp_ratio': 8,
+        'weight_tying': False,
+        'alibi': False,
+        'rope': True,
+        'flash_attention': True,
+        'attention_dropout': 0.0,
+        'attention_layer_norm': False,
+        'clip_qkv': None,
+        'include_bias': False,
+        'block_type': 'sequential',
+        'layer_norm_type': 'rms',
+        'layer_norm_with_affine': True,
+        'layer_norm_eps': 1e-6,
+        'bias_for_layer_norm': False,
+        'attention_layer_norm_with_affine': False,
+        'activation_type': 'swiglu',
+        'residual_dropout': 0.0,
+        'embedding_dropout': 0.0,
+        'max_sequence_length': 1024,
+        'vocab_size': 100278,
+        'embedding_size': 100352,
+        'eos_token_id': 100257,
+        'pad_token_id': 100277,
+        'init_device': 'cuda',
+        'init_fn': 'normal',
+        'init_std': 0.02,
+        'init_cutoff_factor': 3,
+    }
+
+def get_300m_base_model_config():
+    """Return the base model configuration shared by pretrain and CPT."""
+    return {
+        'd_model': 1024,
+        'n_heads': 16,
+        'n_layers': 16,
         'mlp_ratio': 8,
         'weight_tying': False,
         'alibi': False,
@@ -42,6 +77,7 @@ def get_train_config(
     save_folder,
     train_data_paths,
     eval_datasets,
+    model_size = '20m',
     train_data_label_mask_paths=None,
     optimizer='adamw',
     learning_rate=3.0e-4,
@@ -119,7 +155,11 @@ def get_train_config(
     if device_eval_batch_size is None:
         device_eval_batch_size = device_train_microbatch_size
     
-    model_config = get_base_model_config()
+    if model_size == '20m':
+        model_config = get_20m_base_model_config()
+    elif model_size == '300m':
+        model_config = get_300m_base_model_config()
+
     if model_overrides:
         model_config.update(model_overrides)
 
