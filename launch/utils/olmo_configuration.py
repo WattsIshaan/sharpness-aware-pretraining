@@ -26,10 +26,45 @@ def get_20m_base_model_config():
         'residual_dropout': 0.0,
         'embedding_dropout': 0.0,
         'max_sequence_length': 1024,
-        'vocab_size': 100278,
-        'embedding_size': 100352,
-        'eos_token_id': 100257,
-        'pad_token_id': 100277,
+        'vocab_size': 50280,
+        'embedding_size': 50304,
+        'eos_token_id': 0,
+        'pad_token_id': 1,
+        'init_device': 'cuda',
+        'init_fn': 'normal',
+        'init_std': 0.02,
+        'init_cutoff_factor': 3,
+    }
+
+def get_60m_base_model_config():
+    """Return the base model configuration shared by pretrain and CPT."""
+    return {
+        'd_model': 512,
+        'n_heads': 8,
+        'n_layers': 8,
+        'mlp_ratio': 8,
+        'weight_tying': False,
+        'alibi': False,
+        'rope': True,
+        'flash_attention': True,
+        'attention_dropout': 0.0,
+        'attention_layer_norm': False,
+        'clip_qkv': None,
+        'include_bias': False,
+        'block_type': 'sequential',
+        'layer_norm_type': 'rms',
+        'layer_norm_with_affine': True,
+        'layer_norm_eps': 1e-6,
+        'bias_for_layer_norm': False,
+        'attention_layer_norm_with_affine': False,
+        'activation_type': 'swiglu',
+        'residual_dropout': 0.0,
+        'embedding_dropout': 0.0,
+        'max_sequence_length': 1024,
+        'vocab_size': 50280,
+        'embedding_size': 50304,
+        'eos_token_id': 0,
+        'pad_token_id': 1,
         'init_device': 'cuda',
         'init_fn': 'normal',
         'init_std': 0.02,
@@ -157,13 +192,17 @@ def get_train_config(
     
     if model_size == '20m':
         model_config = get_20m_base_model_config()
+    elif model_size == '60m':
+        model_config = get_60m_base_model_config()
     elif model_size == '300m':
         model_config = get_300m_base_model_config()
+    else:
+        raise ValueError("Invalid Model Size")
 
     if model_overrides:
         model_config.update(model_overrides)
 
-    if max_duration.endswith('T'):
+    if max_duration.endswith('T') and scheduler_name == 'cosine_with_warmup':
         max_tokens = int(float(max_duration[:-1].strip()))
         scheduler_t_warmup = int(0.1 * (max_tokens // (global_train_batch_size * model_config["max_sequence_length"])))
     
