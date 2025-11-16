@@ -765,7 +765,8 @@ class SAM(Optimizer):
 
         # Initialize parent Optimizer to set up optimizer hook dictionaries used by
         # state_dict()/load_state_dict() (e.g., _optimizer_state_dict_pre_hooks).
-        # We pass an empty defaults dict since SAM delegates stepping to base_optimizer.
+        # We pass the base optimizer's param_groups and an empty defaults dict since
+        # SAM delegates stepping to base_optimizer. We'll share state with base_optimizer.
         super().__init__(
             base_optimizer.param_groups,
             {},
@@ -773,10 +774,15 @@ class SAM(Optimizer):
             selective_updates=getattr(base_optimizer, "_selective_updates", False),
         )
 
-        # Re-attach the wrapped optimizer so both share the same references.
+        # Store reference to base optimizer and share its state and param_groups.
+        # This ensures SAM and base_optimizer use the same state dict, so all optimizer
+        # state (e.g., AdamW's exp_avg, exp_avg_sq) is properly tracked.
         self.base_optimizer = base_optimizer
-        self.param_groups = self.base_optimizer.param_groups
+        # Override the state dict created by parent to use base_optimizer's state
+        # (which already contains all the optimizer state from previous steps)
         self.state = self.base_optimizer.state
+        # Ensure param_groups reference matches (should already be the same object)
+        self.param_groups = self.base_optimizer.param_groups
         self._rho = rho
 
     def _grad_norm(self) -> torch.Tensor:
@@ -791,9 +797,7 @@ class SAM(Optimizer):
 
     @torch.no_grad()
     def first_step(self, zero_grad: bool = False):
-        print("SAM 1st Step")
         grad_norm = self._grad_norm()
-        print(f"SAM 1st Step Grad Norm: {grad_norm}")
         if not torch.isfinite(grad_norm):
             return
         scale = self._rho / (grad_norm + 1e-12)
@@ -810,7 +814,6 @@ class SAM(Optimizer):
 
     @torch.no_grad()
     def restore_original_params(self):
-        print("SAM Restore Original Params")
         for group in self.param_groups:
             for param in group["params"]:
                 pert = self.state[param].pop("_sam_perturb", None)
@@ -822,12 +825,29 @@ class SAM(Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None) -> None:
-        print("SAM 2nd Step")
         self.base_optimizer.step(closure=closure)
 
+    def state_dict(self):
+        """Return the state dict of the base optimizer, which contains the actual optimizer state."""
+        return self.base_optimizer.state_dict()
+
     def load_state_dict(self, state_dict):
-        super().load_state_dict(state_dict)
-        self.base_optimizer.param_groups = self.param_groups
+        """Load state dict into the base optimizer."""
+        self.base_optimizer.load_state_dict(state_dict)
+        # Sync param_groups after loading to ensure consistency
+        self.param_groups = self.base_optimizer.param_groups
+        self.state = self.base_optimizer.state
+
+    def get_state_for_param(self, param: nn.Parameter) -> Dict[str, Optional[torch.Tensor]]:
+        """Return optimizer state for a parameter by delegating to the base optimizer.
+        
+        This ensures that metrics collection (e.g., in clip_grads_and_collect_metrics)
+        can properly collect state metrics from the base optimizer (e.g., AdamW's exp_avg, exp_avg_sq).
+        """
+        if hasattr(self.base_optimizer, "get_state_for_param"):
+            return self.base_optimizer.get_state_for_param(param)
+        # Fallback to base class implementation if base optimizer doesn't have this method
+        return super().get_state_for_param(param)
 
     def get_post_step_metrics(
         self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
@@ -950,7 +970,7 @@ class Muon(Optimizer):
 
                     # Perform step weight decay.
                     if self._selective_updates:
-                        mask: Union[torch.Tensor, int] = grad != 0
+                        mask: Union[torch.Tensor, int] = p.grad != 0
                     else:
                         mask = 1
 

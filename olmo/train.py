@@ -889,12 +889,10 @@ class Trainer:
 
         # Run forward-backward pass.
         ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=isinstance(self.optim, SAM))
-        print(f"CE Batch Loss before SAM step: {ce_batch_loss.item()}")
 
         if isinstance(self.optim, SAM):
             self.optim.first_step(zero_grad=True)
             ce_batch_loss, z_batch_loss = self.train_batch(batch)
-            print(f"CE Batch Loss after SAM step: {ce_batch_loss.item()}")
             self.optim.restore_original_params()
 
         # Collect loss, potentially reducing over all ranks.
