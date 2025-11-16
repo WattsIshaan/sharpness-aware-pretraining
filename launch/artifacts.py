@@ -66,6 +66,14 @@ LIST_OF_CPT_FILES= {
             "val" : {
                 "proofpile-validation": ['proofpile/val/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-01-00000-2M.npy'],
             }
+        },
+        "tinygsm" : {
+            "data_paths": [
+                "tinygsm/train/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-00-00000.npy"
+            ],
+            "val" : {
+                "tinygsm-validation": ["tinygsm/val/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-01-00000-2M.npy"]
+            }
         }
     }
 }
@@ -134,7 +142,7 @@ class PretrainedModel(Artifact):
 
         final_run_name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
         if self.optimizer == 'sam':
-            final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
+            final_run_name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
             final_run_name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
         if self.optimizer =='muon':
             final_run_name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
@@ -428,6 +436,11 @@ class AnnealedModel(Artifact):
             optimizer=self.pretrained_model.optimizer,
             learning_rate=self.pretrained_model.learning_rate,
             weight_decay=self.pretrained_model.weight_decay,
+            muon_learning_rate = self.pretrained_model.muon_learning_rate,
+            muon_momentum = self.pretrained_model.muon_momentum,
+            muon_weight_decay = self.pretrained_model.muon_weight_decay,
+            sam_rho=self.pretrained_model.sam_rho,
+            sam_base_optimizer=self.pretrained_model.sam_base_optimizer,
             max_duration=f"{anneal_tokens_billions}e9T",
             stop_at=None,
             seed=6198,
@@ -553,20 +566,19 @@ class CPTModel(Artifact):
 
     def get_requirements(self):
         return {
-            # 'gpus': self.cpt_gpus,
-            # 'nodes': 1,
-            # 'cpus': self.cpt_gpus * 2,
-            # 'mem': '64GB',
-            # 'gres' : "gpu:1"
-            "gres": f"gpu:{self.cpt_gpus}",
+            'gpus': self.cpt_gpus,
             'nodes': 1,
-            'cpus': max(1, self.cpt_gpus * 2),
+            'cpus': self.cpt_gpus * 2,
             'mem': '64GB',
-            'requeue': True,
-            'partition': 'flame',
-            'qos': 'flame-16gpu_qos',
-            'account': 'aditirag',
-            "time": "1-00:00:00"
+            # "gres": f"gpu:{self.cpt_gpus}",
+            # 'nodes': 1,
+            # 'cpus': max(1, self.cpt_gpus * 2),
+            # 'mem': '64GB',
+            # 'requeue': True,
+            # 'partition': 'flame',
+            # 'qos': 'flame-16gpu_qos',
+            # 'account': 'aditirag',
+            # "time": "1-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -696,20 +708,20 @@ class ModelEvaluation(Artifact):
 
     def get_requirements(self):
         return {
-            # 'gpus':1,
-            # 'nodes': 1,
-            # 'cpus': 2,
-            # 'mem': '16GB',
-            # 'requeue': True
-            "gres": "gpu:1",
+            'gpus':1,
             'nodes': 1,
             'cpus': 2,
-            'mem': '64GB',
-            'requeue': True,
-            'partition': 'flame',
-            'qos': 'flame-16gpu_qos',
-            'account': 'aditirag',
-            "time": "1-00:00:00"
+            'mem': '16GB',
+            'requeue': True
+            # "gres": "gpu:1",
+            # 'nodes': 1,
+            # 'cpus': 2,
+            # 'mem': '64GB',
+            # 'requeue': True,
+            # 'partition': 'flame',
+            # 'qos': 'flame-16gpu_qos',
+            # 'account': 'aditirag',
+            # "time": "1-00:00:00"
         }
 
     def construct(self, builder: Task):
