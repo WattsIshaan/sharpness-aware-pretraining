@@ -8,7 +8,7 @@ import yaml
 
 CONFIG_PATH = "/home/iwatts/catastrophic-forgetting/configs/official-0425/OLMo2-1B-stage1.yaml"
 LOCAL_TRAIN_DIR = "/data/user_data/iwatts/datasets/dclm/train"
-GCS_TRAIN_DIR = "gs://cmu-gpucloud-iwatts/datasets/dclm/train/"
+GCS_TRAIN_DIR = "gs://cmu-gpucloud-jspringe/shared/datasets/OLMo/dclm/train/"
 URL_PREFIX_TO_STRIP = "http://olmo-data.org/"
 
 
@@ -32,7 +32,9 @@ def transform_filename(url: str) -> str:
         trimmed = url[len(URL_PREFIX_TO_STRIP):]
     else:
         trimmed = url
-    return trimmed.replace("/", "_")
+    trimmed = trimmed.replace("/", "_")
+    # trimmed_gcs = trimmed[:-10] + "/" + trimmed[-9:]
+    return trimmed
 
 
 def ensure_local_dir(path: str) -> None:
@@ -76,20 +78,15 @@ def main() -> int:
         filename = transform_filename(url)
         local_file = os.path.join(LOCAL_TRAIN_DIR, filename)
 
-        if os.path.exists(local_file):
-            pass
-        else:
-            print(f"Downloading: {url} -> {local_file}")
-            download_via_wget(url, local_file)
+        print(f"Downloading: {url} -> {local_file}")
+        download_via_wget(url, local_file)
 
         print(f"Uploading to GCS: {local_file} -> {GCS_TRAIN_DIR}")
         upload_to_gcs(local_file, GCS_TRAIN_DIR)
 
-        try:
-            os.remove(local_file)
-            print(f"Deleted local file: {local_file}")
-        except FileNotFoundError:
-            pass
+        os.remove(local_file)
+        print(f"Deleted local file: {local_file}")
+        
 
     print("All files downloaded and synced to GCS.")
     return 0

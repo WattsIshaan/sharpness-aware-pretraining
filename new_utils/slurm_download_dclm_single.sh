@@ -8,10 +8,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --partition=cpu
-#SBATCH --requeue
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate forgetting
+conda activate olmo
 
 # Run the downloader
-python new_utils/download_dclm.py
+wget -O datasets/dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004.npy http://olmo-data.org/preprocessed/dclm/text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train/allenai/dolma2-tokenizer/part-187-00004.npy
