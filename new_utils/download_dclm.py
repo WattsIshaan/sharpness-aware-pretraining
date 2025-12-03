@@ -8,7 +8,7 @@ import yaml
 
 CONFIG_PATH = "/home/iwatts/catastrophic-forgetting/configs/official-0425/OLMo2-1B-stage1.yaml"
 LOCAL_TRAIN_DIR = "/data/user_data/iwatts/datasets/dclm/train"
-GCS_TRAIN_DIR = "gs://cmu-gpucloud-iwatts/datasets/dclm/train/"
+GCS_TRAIN_DIR = "gs://cmu-gpucloud-jspringe/shared/datasets/OLMo/dclm/train/"
 URL_PREFIX_TO_STRIP = "http://olmo-data.org/"
 
 

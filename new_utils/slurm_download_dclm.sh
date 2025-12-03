@@ -11,7 +11,7 @@
 #SBATCH --requeue
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate olmo
+conda activate forgetting
 
 # Run the downloader
 python new_utils/download_dclm.py
