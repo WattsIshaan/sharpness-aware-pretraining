@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -139,48 +139,20 @@ def save_model_to_gcs(state_dict: dict, gcs_path: str) -> None:
             os.remove(tmp_path)
 
 
-def get_checkpoint_directory_and_perturbed_path(original_model_path: str, sigma: float) -> Tuple[str, str, str]:
+def get_perturbed_model_name(model_name: str, sigma: float) -> str:
     """
-    Extract checkpoint directory and generate perturbed directory path.
+    Generate perturbed model name with sigma suffix.
     
     Args:
-        original_model_path: Original GCS path to model.pt (e.g., gs://bucket/path/checkpoint/final-unsharded/model.pt)
-        sigma: Standard deviation value (lambda) to append to the directory name
+        model_name: Original model name
+        sigma: Standard deviation value to append to the directory name
     
     Returns:
-        Tuple of (original_checkpoint_dir, perturbed_checkpoint_dir, model_pt_path_in_perturbed)
+        Perturbed model name (e.g., "model_name_perturbed_1_00e-02")
     """
     # Format sigma value for directory name (use scientific notation)
-    lambda_str = f"{sigma:.2e}".replace("e-0", "e-").replace("e+0", "e+").replace(".", "_")
-    
-    # Extract the checkpoint directory (parent of final-unsharded)
-    # Path: gs://bucket/.../checkpoint_name/final-unsharded/model.pt
-    # We want: gs://bucket/.../checkpoint_name
-    path_parts = original_model_path.rstrip("/").split("/")
-    
-    # Find the index of "final-unsharded"
-    try:
-        final_unsharded_idx = path_parts.index("final-unsharded")
-        # Reconstruct path: handle gs:// prefix properly
-        # path_parts[0] = 'gs:', path_parts[1] = '', so we need to join them specially
-        if len(path_parts) > 0 and path_parts[0] == "gs:":
-            # Reconstruct gs://bucket/.../checkpoint_name
-            checkpoint_dir = "gs://" + "/".join(path_parts[2:final_unsharded_idx])
-        else:
-            # Not a gs:// path, just join normally
-            checkpoint_dir = "/".join(path_parts[:final_unsharded_idx])
-    except ValueError:
-        # If "final-unsharded" not found, assume the directory containing model.pt is the checkpoint dir
-        if len(path_parts) > 0 and path_parts[0] == "gs:":
-            checkpoint_dir = "gs://" + "/".join(path_parts[2:-1])
-        else:
-            checkpoint_dir = "/".join(path_parts[:-1])
-    
-    # Create perturbed directory name
-    perturbed_checkpoint_dir = f"{checkpoint_dir}_perturbed_{lambda_str}"
-    perturbed_model_path = f"{perturbed_checkpoint_dir}/final-unsharded/model.pt"
-    
-    return checkpoint_dir, perturbed_checkpoint_dir, perturbed_model_path
+    sigma_str = f"{sigma:.2e}".replace("e-0", "e-").replace("e+0", "e+").replace(".", "_")
+    return f"{model_name}_perturbed_{sigma_str}"
 
 
 def main() -> int:
@@ -188,12 +160,17 @@ def main() -> int:
         description="Perturb model weights with Gaussian noise and save to GCS"
     )
     parser.add_argument(
-        "--gcs_model_path",
+        "--gcs_dir",
         type=str,
         required=True,
-        help="GCS path to the model file (e.g., gs://bucket/path/final-unsharded/model.pt). Must point to the specific .pt file.",
+        help="GCS directory path (e.g., gs://bucket/path/to/models)"
     )
-
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        required=True,
+        help="Model name (directory name containing final-unsharded/model.pt)"
+    )
     parser.add_argument(
         "--sigma",
         type=float,
@@ -207,10 +184,10 @@ def main() -> int:
         help="Random seed for reproducibility (optional)",
     )
     parser.add_argument(
-        "--output-path",
+        "--output_gcs_dir",
         type=str,
-        default=None,
-        help="GCS path for output (default: original_path + '_perturbed_{sigma}')",
+        required=True,
+        help="GCS directory path for storing perturbed model",
     )
     parser.add_argument(
         "--device",
@@ -222,20 +199,18 @@ def main() -> int:
     args = parser.parse_args()
     
     try:
-        # Get checkpoint directory paths
-        original_checkpoint_dir, perturbed_checkpoint_dir, perturbed_model_path = \
-            get_checkpoint_directory_and_perturbed_path(args.gcs_model_path, args.sigma)
+        # Construct paths following evaluate_perturbed.py structure
+        # Input: gcs_dir/model_name/final-unsharded/model.pt
+        original_checkpoint_dir = f"{args.gcs_dir.rstrip('/')}/{args.model_name}"
+        original_model_path = f"{original_checkpoint_dir}/final-unsharded/model.pt"
         
-        if args.output_path:
-            # If custom output path is provided, use it
-            perturbed_checkpoint_dir = args.output_path.rstrip("/")
-            # Extract the model.pt path from the original
-            if "/model.pt" in args.gcs_model_path:
-                perturbed_model_path = f"{perturbed_checkpoint_dir}/model.pt"
-            else:
-                perturbed_model_path = f"{perturbed_checkpoint_dir}/model.pt"
+        # Output: output_gcs_dir/model_name_perturbed_{sigma}/final-unsharded/model.pt
+        perturbed_model_name = get_perturbed_model_name(args.model_name, args.sigma)
+        perturbed_checkpoint_dir = f"{args.output_gcs_dir.rstrip('/')}/{perturbed_model_name}"
+        perturbed_model_path = f"{perturbed_checkpoint_dir}/final-unsharded/model.pt"
         
         print(f"📋 Original checkpoint directory: {original_checkpoint_dir}")
+        print(f"📋 Original model path: {original_model_path}")
         print(f"📋 Perturbed checkpoint directory: {perturbed_checkpoint_dir}")
         print(f"📋 Perturbed model path: {perturbed_model_path}")
         
@@ -245,8 +220,8 @@ def main() -> int:
         print(f"✅ Checkpoint directory copied")
         
         # Step 2: Load and perturb the model
-        print(f"📥 Loading model from {args.gcs_model_path}...")
-        state_dict = load_model_from_gcs(args.gcs_model_path, device=args.device)
+        print(f"📥 Loading model from {original_model_path}...")
+        state_dict = load_model_from_gcs(original_model_path, device=args.device)
         
         print(f"🔧 Perturbing parameters with sigma={args.sigma}...")
         perturbed_state_dict = perturb_state_dict(state_dict, args.sigma, seed=args.seed)
