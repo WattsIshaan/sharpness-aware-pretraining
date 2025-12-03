@@ -32,9 +32,7 @@ def transform_filename(url: str) -> str:
         trimmed = url[len(URL_PREFIX_TO_STRIP):]
     else:
         trimmed = url
-    trimmed = trimmed.replace("/", "_")
-    # trimmed_gcs = trimmed[:-10] + "/" + trimmed[-9:]
-    return trimmed
+    return trimmed.replace("/", "_")
 
 
 def ensure_local_dir(path: str) -> None:
@@ -78,15 +76,20 @@ def main() -> int:
         filename = transform_filename(url)
         local_file = os.path.join(LOCAL_TRAIN_DIR, filename)
 
-        print(f"Downloading: {url} -> {local_file}")
-        download_via_wget(url, local_file)
+        if os.path.exists(local_file):
+            pass
+        else:
+            print(f"Downloading: {url} -> {local_file}")
+            download_via_wget(url, local_file)
 
         print(f"Uploading to GCS: {local_file} -> {GCS_TRAIN_DIR}")
         upload_to_gcs(local_file, GCS_TRAIN_DIR)
 
-        os.remove(local_file)
-        print(f"Deleted local file: {local_file}")
-        
+        try:
+            os.remove(local_file)
+            print(f"Deleted local file: {local_file}")
+        except FileNotFoundError:
+            pass
 
     print("All files downloaded and synced to GCS.")
     return 0
