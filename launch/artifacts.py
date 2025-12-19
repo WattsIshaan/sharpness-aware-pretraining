@@ -10,6 +10,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
+#when doin cpt eval comment out all other pretrain validation files except c4
 LIST_OF_PRETRAIN_FILES = {
     "c4": {
         "data_paths" : [f'c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(0, 151)],
@@ -17,6 +18,22 @@ LIST_OF_PRETRAIN_FILES = {
         "tokens_per_file" : 750_000_000,
         "val" : {
             "c4-validation": ['c4/val/eval-data_perplexity_v3_small_gptneox20b_c4_en_val_part-0-00000.npy'],
+            "tulu-validation": {
+                "data": ['allenai_tulu-3-sft-mixture/val/input_ids_tulu.npy'],
+                "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']
+            },
+            "alpaca-validation": {
+                "data": ['tatsu-lab_alpaca/val/input_ids_alpaca.npy'],
+                "masks": ['tatsu-lab_alpaca/val/label_mask.npy']
+            },
+            "gsm8k-validation": {
+                "data": ['openai_gsm8k_main/val/input_ids_gsm8k.npy'],
+                "masks": ['openai_gsm8k_main/val/label_mask.npy']
+            },
+            "siqa-validation": {
+                "data": ['social_i_qa/val/input_ids.npy'],
+                "masks": ['social_i_qa/val/label_mask.npy']
+            }
         }
     },
     "dclm" : {
@@ -44,8 +61,94 @@ LIST_OF_CPT_FILES= {
             "data_paths" : [
                 "starcoder/train/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00000.npy"
             ],
+            "mask_paths" : [],
             "val" : {
                 "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy'],
+            }
+        },
+
+        "tulu" : {
+            "data_paths" : [
+                "allenai_tulu-3-sft-mixture/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "allenai_tulu-3-sft-mixture/train/label_mask.npy"
+            ],
+            "val" : {
+                "tulu-validation": {
+                    "data": ['allenai_tulu-3-sft-mixture/val/input_ids_tulu.npy'],
+                    "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']
+                }
+            }
+        },
+        "alpaca" : {
+            "data_paths" : [
+                "tatsu-lab_alpaca/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "tatsu-lab_alpaca/train/label_mask.npy"
+            ],
+            "val" : {
+                "alpaca-validation": {
+                    "data": ['tatsu-lab_alpaca/val/input_ids_alpaca.npy'],
+                    "masks": ['tatsu-lab_alpaca/val/label_mask.npy']
+                }
+            }
+        },
+        "gsm8k" : {
+            "data_paths" : [
+                "openai_gsm8k_main/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "openai_gsm8k_main/train/label_mask.npy"
+            ],
+            "val" : {
+                "gsm8k-validation": {
+                    "data": ['openai_gsm8k_main/val/input_ids_gsm8k.npy'],
+                    "masks": ['openai_gsm8k_main/val/label_mask.npy']
+                }
+            }
+        },
+        "siqa" : {
+            "data_paths" : [
+                "social_i_qa/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "social_i_qa/train/label_mask.npy"
+            ],
+            "val" : {
+                "siqa-validation": {
+                    "data": ['social_i_qa/val/input_ids.npy'],
+                    "masks": ['social_i_qa/val/label_mask.npy']
+                }
+            }
+        },
+        "rte" : {
+            "data_paths" : [
+                "SetFit_rte/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "SetFit_rte/train/label_mask.npy"
+            ],
+            "val" : {
+                "rte-validation": {
+                    "data": ['SetFit_rte/val/input_ids.npy'],
+                    "masks": ['SetFit_rte/val/label_mask.npy']
+                }
+            }
+        },
+        "tinygsm" : {
+            "data_paths" : [
+                "TinyGSM_TinyGSM/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "TinyGSM_TinyGSM/train/label_mask.npy"
+            ],
+            "val" : {
+                "tinygsm-validation": {
+                    "data": ['TinyGSM_TinyGSM/val/input_ids.npy'],
+                    "masks": ['TinyGSM_TinyGSM/val/label_mask.npy']
+                }
             }
         },
     },
@@ -54,6 +157,7 @@ LIST_OF_CPT_FILES= {
             "data_paths" : [
                 "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-000-00000.npy"
             ],
+            "mask_paths" : [],
             "val" : {
                 "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
             }
@@ -78,6 +182,7 @@ LIST_OF_CPT_FILES= {
             "data_paths" : [
                 "proofpile/train/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-00-00000.npy"
             ],
+            "mask_paths" : [],
             "val" : {
                 "proofpile-validation": ['proofpile/val/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-01-00000-2M.npy'],
             }
@@ -86,8 +191,55 @@ LIST_OF_CPT_FILES= {
             "data_paths": [
                 "tinygsm/train/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-00-00000.npy"
             ],
+            "mask_paths": [
+                "tinygsm/train/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-00-00000-label_mask.npy"
+            ],
             "val" : {
                 "tinygsm-validation": ["tinygsm/val/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-01-00000-2M.npy"]
+            }
+        },
+        "tulu" : {
+            "data_paths" : [
+                "allenai_tulu-3-sft-mixture/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "allenai_tulu-3-sft-mixture/train/label_mask.npy"
+            ],
+            "val" : {
+                "tulu-validation": ['allenai_tulu-3-sft-mixture/val/input_ids.npy'],
+            }
+        },
+        "alpaca" : {
+            "data_paths" : [
+                "tatsu-lab_alpaca/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "tatsu-lab_alpaca/train/label_mask.npy"
+            ],
+            "val" : {
+                "alpaca-validation": ['tatsu-lab_alpaca/val/input_ids.npy'],
+            }
+        },
+        "gsm8k" : {
+            "data_paths" : [
+                "openai_gsm8k_main/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "openai_gsm8k_main/train/label_mask.npy"
+            ],
+            "val" : {
+                "gsm8k-validation": ['openai_gsm8k_main/val/input_ids.npy'],
+            }
+        },
+        "siqa" : {
+            "data_paths" : [
+                "social_i_qa/train/input_ids.npy"
+            ],
+            "mask_paths" : [
+                "social_i_qa/train/label_mask.npy"
+            ],
+            "val" : {
+                "siqa-validation": ['social_i_qa/val/input_ids.npy'],
             }
         }
     }
@@ -155,7 +307,7 @@ class PretrainedModel(Artifact):
         bs_str = str(self.batch_size)
         tk_str = f'{self.train_tokens}B'
 
-        final_run_name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
+        final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
         if self.optimizer == 'sam':
             final_run_name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
             final_run_name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
@@ -166,10 +318,22 @@ class PretrainedModel(Artifact):
     
     @property
     def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+            
         gs_path: str = cast(str, Project.config.GS_PATH)
         remote_path = os.path.join(gs_path, self.checkpoint_relpath)
-        remote_files = G.get_remote_files()
-        return any(f.startswith(remote_path) for f in remote_files)
+        
+        # Get remote files only from PretrainedModel folder (much faster than entire bucket)
+        remote_files = G.get_remote_files(subfolder='PretrainedModel')
+        exists = any(f.startswith(remote_path) for f in remote_files)
+        
+        if exists:
+            log.info(f"[PretrainedModel] ✓ Checkpoint EXISTS: {self.run_name}")
+        else:
+            log.info(f"[PretrainedModel] ❌ Checkpoint NOT found: {self.run_name}")
+        
+        return exists
     
     def get_requirements(self):
         return {
@@ -355,9 +519,14 @@ class AnnealedModel(Artifact):
 
     @property
     def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+            
         gs_path: str = cast(str, Project.config.GS_PATH)
         remote_path = os.path.join(gs_path, self.checkpoint_relpath)
-        remote_files = G.get_remote_files()
+        
+        # Get remote files only from AnnealedModel folder
+        remote_files = G.get_remote_files(subfolder='AnnealedModel')
         return any(f.startswith(remote_path) for f in remote_files)
 
     def get_requirements(self):
@@ -551,6 +720,9 @@ class CPTModel(Artifact):
     scheduler_name: str = 'cosine_with_warmup'
     scheduler_alpha_f: float = 0.1
     cpt_gpus: int = 1
+    muon_learning_rate: float = 5e-4
+    muon_weight_decay: float = 0.1
+    muon_momentum: float = 0.95
 
     @property
     def relpath(self) -> str:
@@ -562,37 +734,53 @@ class CPTModel(Artifact):
 
     @property
     def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+            
         gs_root: str = cast(str, Project.config.GS_PATH)
         remote_path = os.path.join(gs_root, self.checkpoint_relpath)
-        remote_files = G.get_remote_files()
-        return any(f.startswith(remote_path) for f in remote_files)
+        
+        # Get remote files only from CPTModel folder
+        remote_files = G.get_remote_files(subfolder='CPTModel')
+        exists = any(f.startswith(remote_path) for f in remote_files)
+        
+        if exists:
+            log.info(f"[CPTModel] ✓ Checkpoint EXISTS: {self.cpt_dataset}")
+        else:
+            log.info(f"[CPTModel] ❌ Checkpoint NOT found: {self.cpt_dataset}")
+        
+        return exists
 
     @property
     def run_name(self) -> str:
         pretrained_model_name = self.pretrained_model.run_name
 
         #EDITED FOR MUON
-        lr_str = f'{self.learning_rate:.0e}'.replace('e-0', 'e-')
+        
+        lr_str = f'{self.learning_rate:.2e}'.replace('e-0', 'e-')
+        muon_lr_str = f'{self.muon_learning_rate:.2e}'.replace('e-0', 'e-')
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
         bs_str = str(self.batch_size)
+
+        if self.optimizer == 'muon':
+            return f'{pretrained_model_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{bs_str}-muon_lr{muon_lr_str}'
         
         return f'{pretrained_model_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
 
+
     def get_requirements(self):
         return {
-            # 'gpus': self.cpt_gpus,
+            'gpus': f"{self.cpt_gpus}", #A100_40GB:
+            'nodes': 1,
+            'cpus': self.cpt_gpus * 2,
+            'mem': '64GB',
+            # "gres": f"gpu:{self.cpt_gpus}",
             # 'nodes': 1,
             # 'cpus': self.cpt_gpus * 2,
             # 'mem': '64GB',
-            "gres": f"gpu:{self.cpt_gpus}",
-            'nodes': 1,
-            'cpus': max(1, self.cpt_gpus * 2),
-            'mem': '64GB',
             'requeue': True,
-            'partition': 'flame',
-            'qos': 'flame-16gpu_qos',
-            'account': 'aditirag',
-            "time": "1-00:00:00"
+            'partition': 'preempt',
+            # "time": "1-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -611,7 +799,7 @@ class CPTModel(Artifact):
             delete=True,
             checksum=True,
             skip_existing=False,
-            check_exists=False,
+            check_exists=True,
             contents=True
         )
 
@@ -619,13 +807,24 @@ class CPTModel(Artifact):
         train_data_paths = []
         for cpt_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["data_paths"]:
             train_data_paths.append(os.path.join(local_data_path, cpt_data_path))
+
+        train_mask_paths = []
+        for cpt_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["mask_paths"]:
+            train_mask_paths.append(os.path.join(local_data_path, cpt_data_path))
         
         # Build eval datasets from validation_data
         eval_datasets = dict()
         for eval_dataset in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["val"]:
+            val_data = LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["val"][eval_dataset]
+            # Handle both old list format and new dict format with "data" and "masks"
+            if isinstance(val_data, dict):
+                eval_data_paths = val_data.get("data", [])
+            else:
+                eval_data_paths = val_data
+            
             eval_datasets[eval_dataset] = [
                 os.path.join(local_data_path, eval_data_path)
-                for eval_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["val"][eval_dataset]
+                for eval_data_path in eval_data_paths
             ]
 
         project_name: str = cast(str, Project.config.PROJECT_NAME)
@@ -651,11 +850,15 @@ class CPTModel(Artifact):
             run_name=run_name,
             save_folder=save_folder,
             train_data_paths=train_data_paths,
+            train_data_label_mask_paths=train_mask_paths,
             eval_datasets=eval_datasets,
             model_size=self.pretrained_model.model_size,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
+            muon_learning_rate=self.muon_learning_rate,
+            muon_momentum=self.muon_momentum,
+            muon_weight_decay=self.muon_weight_decay,
             max_duration=f'{self.train_tokens}e6T',
             stop_at=None,
             seed=6198,
@@ -686,6 +889,8 @@ class CPTModel(Artifact):
 
         # Collect all data paths
         all_data_paths = train_data_paths.copy()
+        all_data_paths.extend(train_mask_paths)
+        
         for eval_paths in eval_datasets.values():
             all_data_paths.extend(eval_paths)
         
@@ -724,14 +929,18 @@ class ModelEvaluation(Artifact):
 
     @property
     def exists(self) -> bool:
-        gs_path: str = cast(str, Project.config.GS_PATH)
-        remote_path = os.path.join(gs_path, self.relpath)
-        remote_files = G.get_remote_files()
-        return any(f == remote_path for f in remote_files)
+        # Always return False to force re-evaluation and overwrite existing results
+        return False
 
     def get_requirements(self):
         return {
-            # 'gpus':1,
+            'gpus':1,
+            'nodes': 1,
+            'cpus': 2,
+            'mem': '16GB',
+            'requeue': True,
+            'partition': 'preempt',
+            # "gres": "gpu:1",
             # 'nodes': 1,
             # 'cpus': 2,
             # 'mem': '16GB',
@@ -772,40 +981,93 @@ class ModelEvaluation(Artifact):
 
         # Collect and download evaluation data files
         local_eval_paths = []
+        local_mask_paths = []
+        
         if isinstance(self.model, (PretrainedModel, AnnealedModel)):
             for eval_dataset in LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"]:
-                for eval_path in LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"][eval_dataset]:
+                val_data = LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"][eval_dataset]
+                # Handle both old list format and new dict format
+                if isinstance(val_data, dict):
+                    eval_paths = val_data.get("data", [])
+                    mask_paths = val_data.get("masks", [])
+                else:
+                    eval_paths = val_data
+                    mask_paths = []
+                
+                for i, eval_path in enumerate(eval_paths):
                     local_eval_path = os.path.join(local_root, eval_path)
                     local_eval_paths.append(local_eval_path)
+                    
+                    # Add mask if available
+                    if i < len(mask_paths):
+                        local_mask_path = os.path.join(local_root, mask_paths[i])
+                        local_mask_paths.append(local_mask_path)
+                    else:
+                        local_mask_paths.append(None)
+                        
         elif isinstance(self.model, CPTModel):
-            for eval_dataset in LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.cpt_dataset]["val"]:
-                for eval_path in LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.cpt_dataset]["val"][eval_dataset]:
+            cpt_val = LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.cpt_dataset]["val"]
+            for eval_dataset in cpt_val:
+                val_data = cpt_val[eval_dataset]
+                # Handle both old list format and new dict format
+                if isinstance(val_data, dict):
+                    eval_paths = val_data.get("data", [])
+                    mask_paths = val_data.get("masks", [])
+                else:
+                    eval_paths = val_data
+                    mask_paths = []
+                
+                for i, eval_path in enumerate(eval_paths):
                     local_eval_path = os.path.join(local_root, eval_path)
                     local_eval_paths.append(local_eval_path)
+                    
+                    # Add mask if available
+                    if i < len(mask_paths):
+                        local_mask_path = os.path.join(local_root, mask_paths[i])
+                        local_mask_paths.append(local_mask_path)
+                    else:
+                        local_mask_paths.append(None)
 
         # Download each eval file from GS_DATA_PATH mirror
         for local_path in local_eval_paths:
             gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
             gs_path_var = local_path.replace(local_root, gs_data_path)
             builder.download_from_gs(gs_path_var, local_path, directory=False)
+        
+        # Download mask files if they exist
+        for local_mask_path in local_mask_paths:
+            if local_mask_path:
+                gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
+                gs_mask_path = local_mask_path.replace(local_root, gs_data_path)
+                # Download mask file
+                builder.download_from_gs(gs_mask_path, local_mask_path, directory=False)
 
         # Build comma-separated list for evaluator
         data_path_arg = ','.join(local_eval_paths)
+        
+        # Build comma-separated mask path list - must align with data paths
+        # Use empty string for data files without masks
+        mask_path_list = [m if m else '' for m in local_mask_paths]
+        mask_path_arg = ','.join(mask_path_list)
 
         # Path to evaluation script
-        eval_script = os.path.join('scripts', 'evaluate.py')
+        eval_script = os.path.join('catastrophic-forgetting', 'scripts', 'evaluate.py')
 
-        # Run evaluation
-        builder.run_command(
-            ' '.join([
-                'python', eval_script,
-                f"--model_path {local_model_path}",
-                f"--device {self.device}",
-                f"--data_path {data_path_arg}",
-                f"--chunk_size {self.chunk_size}",
-                f"--output_path {local_output_path}",
-            ])
-        )
+        # Run evaluation with optional mask paths
+        eval_command_parts = [
+            'python', eval_script,
+            f"--model_path {local_model_path}",
+            f"--device {self.device}",
+            f"--data_path {data_path_arg}",
+            f"--chunk_size {self.chunk_size}",
+            f"--output_path {local_output_path}",
+        ]
+        
+        # Only add mask_path if we have any non-None masks
+        if any(m for m in local_mask_paths if m):
+            eval_command_parts.append(f"--mask_path {mask_path_arg}")
+        
+        builder.run_command(' '.join(eval_command_parts))
 
         # Upload results to GS
         local_eval_dir = os.path.dirname(local_output_path)
