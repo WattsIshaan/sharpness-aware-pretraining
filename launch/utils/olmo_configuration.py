@@ -239,9 +239,9 @@ def get_train_config(
     if model_overrides:
         model_config.update(model_overrides)
 
-    if max_duration.endswith('T') and scheduler_name == 'cosine_with_warmup':
-        max_tokens = int(float(max_duration[:-1].strip()))
-        scheduler_t_warmup = int(0.1 * (max_tokens // (global_train_batch_size * model_config["max_sequence_length"])))
+    # if max_duration.endswith('T') and scheduler_name == 'cosine_with_warmup':
+    #     max_tokens = int(float(max_duration[:-1].strip()))
+    #     scheduler_t_warmup = int(0.1 * (max_tokens // (global_train_batch_size * model_config["max_sequence_length"])))
     
     config = {
         'run_name': run_name,
