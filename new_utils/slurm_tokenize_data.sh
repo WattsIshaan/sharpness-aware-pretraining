@@ -22,7 +22,7 @@ GCS_BUCKET="gs://cmu-gpucloud-catheri4/datasets"  # Update with your bucket
 
 # Tokenization parameters
 MAX_TOKENS=100000000  # 100M tokens 
-SEQ_LEN=2048          # Sequence length
+SEQ_LEN=1024          # Sequence length
 BUFFER_MULT=1.4       # Buffer multiplier for early stopping
 
 # Create logs directory if it doesn't exist
@@ -35,9 +35,8 @@ else
     # Default datasets to process
     # Format: "dataset_name" or "dataset_name:config_name"
     declare -a DATASETS=(
-        "SetFit/rte"
-        "TinyGSM/TinyGSM"
-        "allenai/tulu-3-sft-mixture"
+        "allenai/social_i_qa"
+        #"openai/gsm8k:main"
          # Requires config (main or socratic)
         # Other options:
         # "bigcode/starcoderdata"  # For code data

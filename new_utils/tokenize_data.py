@@ -45,6 +45,31 @@ def upload_to_gcs(local_dir: Path, gcs_path: str) -> None:
         raise
 
 
+def load_dataset_with_fallback(dataset_name: str, config_name: str = None, split: str = "train"):
+    """Load dataset with fallback to parquet revision if dataset scripts are not supported."""
+    try:
+        if config_name:
+            return ds.load_dataset(dataset_name, config_name, split=split, trust_remote_code=True)
+        else:
+            return ds.load_dataset(dataset_name, split=split, trust_remote_code=True)
+    except RuntimeError as e:
+        # Only retry with parquet if the error is about dataset scripts not being supported
+        if "Dataset scripts are no longer supported" in str(e):
+            log.warning(f"Dataset scripts not supported: {e}")
+            log.info("Retrying with revision='refs/convert/parquet'...")
+            try:
+                if config_name:
+                    return ds.load_dataset(dataset_name, config_name, split=split, trust_remote_code=True, revision="refs/convert/parquet")
+                else:
+                    return ds.load_dataset(dataset_name, split=split, trust_remote_code=True, revision="refs/convert/parquet")
+            except Exception as e2:
+                log.error(f"Failed to load with parquet revision: {e2}")
+                raise
+        else:
+            # Re-raise if it's a different RuntimeError
+            raise
+
+
 def main(opts) -> None:
     tokenizer: Tokenizer
     if Path(opts.tokenizer).is_file():
@@ -60,21 +85,21 @@ def main(opts) -> None:
             dataset_name, config_name = dataset_spec.split(":", 1)
             log.info(f"Loading dataset: {dataset_name} (config: {config_name})")
             try:
-                dataset = ds.load_dataset(dataset_name, config_name, split="train", trust_remote_code=False, revision="refs/convert/parquet")
+                dataset = load_dataset_with_fallback(dataset_name, config_name)
             except Exception as e:
                 log.error(f"Failed to load {dataset_name} with config {config_name}: {e}")
                 log.info("Trying without config...")
-                dataset = ds.load_dataset(dataset_name, split="train", trust_remote_code=False, revision="refs/convert/parquet")
+                dataset = load_dataset_with_fallback(dataset_name)
         else:
             dataset_name = dataset_spec
             log.info(f"Loading dataset: {dataset_name}")
             try:
-                dataset = ds.load_dataset(dataset_name, split="train", trust_remote_code=False, revision="refs/convert/parquet")
+                dataset = load_dataset_with_fallback(dataset_name)
             except ValueError as e:
                 # Check if it's a missing config error
                 if "Config name is missing" in str(e):
                     log.info("Dataset requires a config. Trying with 'main' config...")
-                    dataset = ds.load_dataset(dataset_name, "main", split="train", trust_remote_code=False, revision="refs/convert/parquet")
+                    dataset = load_dataset_with_fallback(dataset_name, "main")
                 else:
                     raise
         all_datasets.append(dataset)
@@ -175,12 +200,51 @@ def main(opts) -> None:
         log.warning(f"⚠ Total tokens to save: {total_tokens:,d} ({total_tokens/max_tokens*100:.1f}% of target - consider increasing buffer or dataset size)")
     log.info(f"Number of examples: {len(examples_to_keep):,d}")
 
-    # Split 80/20 for train/val
+    # Split ~80/20 for train/val at example boundaries
+    # Train ends at seq_len boundary, val starts with complete example
     train_split = 0.8
-    train_tokens = int(total_tokens * train_split)
-    val_tokens = total_tokens - train_tokens
+    num_train_examples = int(len(examples_to_keep) * train_split)
     
-    log.info(f"Splitting data: {train_tokens:,d} train tokens ({train_split*100:.0f}%), {val_tokens:,d} val tokens ({(1-train_split)*100:.0f}%)")
+    # Ensure we don't include partial examples in the split
+    train_examples = []
+    val_examples = []
+    train_token_count = 0
+    
+    for idx, (ex, num_tokens) in enumerate(examples_to_keep):
+        if idx < num_train_examples:
+            # Add to train
+            train_examples.append((ex, num_tokens))
+            train_token_count += num_tokens
+        else:
+            # Add complete sequences to val (each example is seq_len)
+            val_examples.append((ex, opts.seq_len))
+    
+    # Ensure train ends at seq_len boundary (multiple of context length)
+    # Round down to nearest multiple
+    train_tokens_rounded = (train_token_count // opts.seq_len) * opts.seq_len
+    
+    # If train tokens exceed the rounded boundary, move last examples to val
+    if train_tokens_rounded < train_token_count:
+        # Find where to cut train to end at seq_len boundary
+        adjusted_train = []
+        cumulative = 0
+        for ex, num_tokens in train_examples:
+            if cumulative + num_tokens <= train_tokens_rounded:
+                adjusted_train.append((ex, num_tokens))
+                cumulative += num_tokens
+            else:
+                # Move this and remaining examples to val
+                val_examples.insert(0, (ex, opts.seq_len))
+        train_examples = adjusted_train
+        train_tokens = train_tokens_rounded
+    else:
+        train_tokens = train_token_count
+    
+    val_tokens = len(val_examples) * opts.seq_len
+    
+    log.info(f"Splitting data: {train_tokens:,d} train tokens ({train_tokens/total_tokens*100:.1f}%), {val_tokens:,d} val tokens ({val_tokens/total_tokens*100:.1f}%)")
+    log.info(f"Train: {len(train_examples):,d} examples = {train_tokens // opts.seq_len} complete seq_len blocks")
+    log.info(f"Val: {len(val_examples):,d} complete examples of length {opts.seq_len}")
 
     log.info(f"Saving results to '{opts.output_dir}'...")
     output_dir = Path(opts.output_dir)
@@ -200,7 +264,7 @@ def main(opts) -> None:
         str(train_dir / "label_mask.npy"), dtype=np.bool_, mode="w+", shape=(train_tokens,)
     )
     
-    # Create memory-mapped files for val
+    # Create memory-mapped files for val (complete sequences only)
     val_input_ids = np.memmap(
         str(val_dir / "input_ids.npy"), dtype=np.uint16, mode="w+", shape=(val_tokens,)
     )
@@ -208,40 +272,22 @@ def main(opts) -> None:
         str(val_dir / "label_mask.npy"), dtype=np.bool_, mode="w+", shape=(val_tokens,)
     )
     
-    # Write data
-    log.info("Writing train and val data...")
+    # Write train data
+    log.info("Writing train data...")
     train_offset = 0
-    val_offset = 0
-    current_total = 0
-    in_val_split = False
+    for ex, num_tokens in track(train_examples, description="Writing train"):
+        train_input_ids[train_offset : train_offset + num_tokens] = ex["input_ids"][:num_tokens]  # type: ignore
+        train_label_mask[train_offset : train_offset + num_tokens] = ex["label_mask"][:num_tokens]  # type: ignore
+        train_offset += num_tokens
     
-    for ex, num_tokens in track(examples_to_keep):
-        if current_total < train_tokens:
-            # Still in train split
-            tokens_for_train = min(num_tokens, train_tokens - current_total)
-            train_input_ids[train_offset : train_offset + tokens_for_train] = ex["input_ids"][:tokens_for_train]  # type: ignore
-            train_label_mask[train_offset : train_offset + tokens_for_train] = ex["label_mask"][:tokens_for_train]  # type: ignore
-            train_offset += tokens_for_train
-            
-            # If example spans both splits
-            if tokens_for_train < num_tokens:
-                if not in_val_split:
-                    log.info("Switching to val split...")
-                    in_val_split = True
-                tokens_for_val = num_tokens - tokens_for_train
-                val_input_ids[val_offset : val_offset + tokens_for_val] = ex["input_ids"][tokens_for_train:num_tokens]  # type: ignore
-                val_label_mask[val_offset : val_offset + tokens_for_val] = ex["label_mask"][tokens_for_train:num_tokens]  # type: ignore
-                val_offset += tokens_for_val
-        else:
-            # In val split
-            if not in_val_split:
-                log.info("Switching to val split...")
-                in_val_split = True
-            val_input_ids[val_offset : val_offset + num_tokens] = ex["input_ids"][:num_tokens]  # type: ignore
-            val_label_mask[val_offset : val_offset + num_tokens] = ex["label_mask"][:num_tokens]  # type: ignore
-            val_offset += num_tokens
-        
-        current_total += num_tokens
+    # Write val data (complete sequences)
+    log.info("Writing val data...")
+    val_offset = 0
+    for ex, _ in track(val_examples, description="Writing val"):
+        # Each val example is a complete sequence of seq_len
+        val_input_ids[val_offset : val_offset + opts.seq_len] = ex["input_ids"][:opts.seq_len]  # type: ignore
+        val_label_mask[val_offset : val_offset + opts.seq_len] = ex["label_mask"][:opts.seq_len]  # type: ignore
+        val_offset += opts.seq_len
     
     log.info("Flushing train data...")
     train_input_ids.flush()
