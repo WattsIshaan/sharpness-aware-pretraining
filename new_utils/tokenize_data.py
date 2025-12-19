@@ -51,7 +51,12 @@ def main(opts) -> None:
         tokenizer = Tokenizer.from_file(opts.tokenizer, eos_token_id=opts.eos, pad_token_id=opts.pad)
     else:
         tokenizer = Tokenizer.from_pretrained(opts.tokenizer, eos_token_id=opts.eos, pad_token_id=opts.pad)
-
+    
+    # Set dtype depending on tokenizer
+    # If tokenizer path ends with "tokenizers/allenai_dolma2.json", use uint32; else use uint16
+    dtype = np.uint32 if (
+        isinstance(opts.tokenizer, str) and opts.tokenizer.endswith("tokenizers/allenai_dolma2.json")
+    ) else np.uint16
     # Load and concatenate all datasets
     all_datasets = []
     for dataset_spec in opts.datasets:
@@ -194,7 +199,7 @@ def main(opts) -> None:
 
     # Create memory-mapped files for train
     train_input_ids = np.memmap(
-        str(train_dir / "input_ids.npy"), dtype=np.uint16, mode="w+", shape=(train_tokens,)
+        str(train_dir / "input_ids.npy"), dtype=dtype, mode="w+", shape=(train_tokens,)
     )
     train_label_mask = np.memmap(
         str(train_dir / "label_mask.npy"), dtype=np.bool_, mode="w+", shape=(train_tokens,)
@@ -202,7 +207,7 @@ def main(opts) -> None:
     
     # Create memory-mapped files for val
     val_input_ids = np.memmap(
-        str(val_dir / "input_ids.npy"), dtype=np.uint16, mode="w+", shape=(val_tokens,)
+        str(val_dir / "input_ids.npy"), dtype=dtype, mode="w+", shape=(val_tokens,)
     )
     val_label_mask = np.memmap(
         str(val_dir / "label_mask.npy"), dtype=np.bool_, mode="w+", shape=(val_tokens,)
