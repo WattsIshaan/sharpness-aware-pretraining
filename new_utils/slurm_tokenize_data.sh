@@ -12,16 +12,17 @@
 #SBATCH --requeue
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate myenv313
+conda activate forgetting
 
 # Set paths
-SCRIPT_DIR="/home/catheri4/catastrophic-forgetting/new_utils"
-TOKENIZER_PATH="/home/catheri4/catastrophic-forgetting/olmo_data/tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json"
-OUTPUT_BASE_DIR="/tmp/tokenized_data"
-GCS_BUCKET="gs://cmu-gpucloud-catheri4/datasets"  # Update with your bucket
+SCRIPT_DIR="/home/iwatts/catastrophic-forgetting/new_utils"
+TOKENIZER_PATH="/home/iwatts/catastrophic-forgetting/olmo_data/tokenizers/allenai_dolma2.json"
+OUTPUT_BASE_DIR="/tmp/iwatts/tokenized_data"
+GCS_BUCKET="gs://cmu-gpucloud-jspringe/shared/datasets/OLMo"  # Update with your bucket
 
 # Tokenization parameters
 MAX_TOKENS=100000000  # 100M tokens 
+SEQ_LEN=1024          # Sequence length
 SEQ_LEN=1024          # Sequence length
 BUFFER_MULT=1.4       # Buffer multiplier for early stopping
 

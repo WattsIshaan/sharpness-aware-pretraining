@@ -49,8 +49,7 @@ LIST_OF_PRETRAIN_FILES = {
         ],
         "tokens_per_file" : 3_000_000_000,
         "val" : {
-            "dclm-validation": ['dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-2M.npy'],
-            "c4-validation": ['c4/val/eval-data_perplexity_v3_small_dolma2-tokenizer_c4_en_val_part-0-00000.npy'],
+            "dclm-validation": ['dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-20M.npy'],
         }
     }
 }
@@ -160,7 +159,23 @@ LIST_OF_CPT_FILES= {
             ],
             "mask_paths" : [],
             "val" : {
-                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-001-00000-2M.npy'],
+                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
+            }
+        },
+        "starcoder2" : {
+            "data_paths" : [
+                "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-001-00000.npy"
+            ],
+            "val" : {
+                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
+            }
+        },
+        "starcoder3" : {
+            "data_paths" : [
+                "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-002-00000.npy"
+            ],
+            "val" : {
+                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
             }
         },
         "proofpile" : {
@@ -328,8 +343,10 @@ class PretrainedModel(Artifact):
             'cpus': max(1, self.pretrain_gpus * 2),
             'mem': '64GB',
             'requeue': True,
-            'partition': 'preempt',
-            "time": "2-00:00:00"
+            'partition': 'flame',
+            'qos': 'flame-16gpu_qos',
+            'account': 'aditirag',
+            "time": "12-00:00:00"
         }
     
     def construct(self, builder: Task):
@@ -395,7 +412,7 @@ class PretrainedModel(Artifact):
             scheduler_t_warmup=self.scheduler_t_warmup,
             global_train_batch_size=self.batch_size,
             device_train_microbatch_size=32,
-            eval_interval=5000,
+            eval_interval=20000,
             save_interval_unsharded=5000,
             wandb_project=project_name,
             wandb_entity=wandb_entity,
@@ -759,7 +776,7 @@ class CPTModel(Artifact):
             'mem': '64GB',
             # "gres": f"gpu:{self.cpt_gpus}",
             # 'nodes': 1,
-            # 'cpus': max(1, self.cpt_gpus * 2),
+            # 'cpus': self.cpt_gpus * 2,
             # 'mem': '64GB',
             'requeue': True,
             'partition': 'preempt',
@@ -813,6 +830,14 @@ class CPTModel(Artifact):
         project_name: str = cast(str, Project.config.PROJECT_NAME)
         wandb_entity: str = cast(str, Project.config.WANDB_ENTITY)
 
+        total_tokens = self.train_tokens * MILLION
+        batch_size = self.batch_size
+        max_sequence_length = 1024
+        # (Could be computed elsewhere via config gather, this covers common cases)
+        tokens_per_step = batch_size * max_sequence_length
+        total_steps = max(1, total_tokens // tokens_per_step)
+        scheduler_t_warmup = max(1, int(total_steps * 0.1))
+
         model_overrides = dict()
         if self.pretrained_model.train_dataset == "dclm":
             model_overrides = {
@@ -840,9 +865,10 @@ class CPTModel(Artifact):
             model_overrides=model_overrides,
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
+            scheduler_t_warmup=scheduler_t_warmup,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=32,
-            eval_interval=100,
+            device_train_microbatch_size=4,
+            eval_interval=1000,
             save_interval_unsharded=1000,
             wandb_project=project_name,
             wandb_entity=wandb_entity,
@@ -917,12 +943,17 @@ class ModelEvaluation(Artifact):
             # "gres": "gpu:1",
             # 'nodes': 1,
             # 'cpus': 2,
-            # 'mem': '64GB',
-            # 'requeue': True,
-            # 'partition': 'flame',
-            # 'qos': 'flame-16gpu_qos',
-            # 'account': 'aditirag',
-            # "time": "1-00:00:00"
+            # 'mem': '16GB',
+            # 'requeue': True
+            "gres": "gpu:8",
+            'nodes': 1,
+            'cpus': 8,
+            'mem': '64GB',
+            'requeue': True,
+            'partition': 'flame',
+            'qos': 'flame-16gpu_qos',
+            'account': 'aditirag',
+            "time": "1-00:00:00"
         }
 
     def construct(self, builder: Task):
