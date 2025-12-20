@@ -1,276 +1,121 @@
 import os
 import random
+import math
+import logging
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, Dict, List, Any
+
 from experiments import Artifact, Task, Project  # type: ignore
 from launch import globals as G
 from launch.utils.olmo_configuration import get_train_config
-import math
-import logging
 
 log = logging.getLogger(__name__)
 
-#when doin cpt eval comment out all other pretrain validation files except c4
+BILLION = 10**9
+MILLION = 10**6
+
+# --- Data Configuration Maps ---
+
 LIST_OF_PRETRAIN_FILES = {
     "c4": {
-        "data_paths" : [f'c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(0, 151)],
-        "anneal_data_paths" : [f'c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(151, 171)],
-        "tokens_per_file" : 750_000_000,
-        "val" : {
+        "data_paths": [f'c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(151)],
+        "anneal_data_paths": [f'c4/train/preprocessed_c4_v1_7-dd_ngram_dp_030-qc_cc_en_bin_001-fix_gpt-neox-olmo-dolma-v1_5_part-{i:03d}-00000.npy' for i in range(151, 171)],
+        "tokens_per_file": 750 * MILLION,
+        "val": {
             "c4-validation": ['c4/val/eval-data_perplexity_v3_small_gptneox20b_c4_en_val_part-0-00000.npy'],
-            "tulu-validation": {
-                "data": ['allenai_tulu-3-sft-mixture/val/input_ids_tulu.npy'],
-                "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']
-            },
-            "alpaca-validation": {
-                "data": ['tatsu-lab_alpaca/val/input_ids_alpaca.npy'],
-                "masks": ['tatsu-lab_alpaca/val/label_mask.npy']
-            },
-            "gsm8k-validation": {
-                "data": ['openai_gsm8k_main/val/input_ids_gsm8k.npy'],
-                "masks": ['openai_gsm8k_main/val/label_mask.npy']
-            },
-            "siqa-validation": {
-                "data": ['social_i_qa/val/input_ids.npy'],
-                "masks": ['social_i_qa/val/label_mask.npy']
-            }
+            "tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids_tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']},
+            "alpaca-validation": {"data": ['tatsu-lab_alpaca/val/input_ids_alpaca.npy'], "masks": ['tatsu-lab_alpaca/val/label_mask.npy']},
+            "gsm8k-validation": {"data": ['openai_gsm8k_main/val/input_ids_gsm8k.npy'], "masks": ['openai_gsm8k_main/val/label_mask.npy']},
+            "siqa-validation": {"data": ['social_i_qa/val/input_ids.npy'], "masks": ['social_i_qa/val/label_mask.npy']}
         }
     },
-    "dclm" : {
-        "data_paths" : [
+    "dclm": {
+        "data_paths": [
             f'dclm/train/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-{i:03d}/{j:05d}.npy'
-            for i in range(0, 50)
-            for j in range(0, 5) 
+            for i in range(50) for j in range(5)
         ],
-        "anneal_data_paths" : [
+        "anneal_data_paths": [
             f'dclm/train/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-{i:03d}/{j:05d}.npy'
-            for i in range(50, 60)
-            for j in range(0, 5) 
+            for i in range(50, 60) for j in range(5)
         ],
-        "tokens_per_file" : 3_000_000_000,
-        "val" : {
+        "tokens_per_file": 3 * BILLION,
+        "val": {
             "dclm-validation": ['dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-20M.npy'],
         }
     }
 }
 
-
-LIST_OF_CPT_FILES= {
-    "c4" : {
-        "starcoder" : {
-            "data_paths" : [
-                "starcoder/train/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00000.npy"
-            ],
-            "mask_paths" : [],
-            "val" : {
-                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy'],
-            }
+LIST_OF_CPT_FILES = {
+    "c4": {
+        "starcoder": {
+            "data_paths": ["starcoder/train/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00000.npy"],
+            "mask_paths": [],
+            "val": {"starcoder-validation": ['starcoder/val/preprocessed_starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy']}
         },
-
-        "tulu" : {
-            "data_paths" : [
-                "allenai_tulu-3-sft-mixture/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "allenai_tulu-3-sft-mixture/train/label_mask.npy"
-            ],
-            "val" : {
-                "tulu-validation": {
-                    "data": ['allenai_tulu-3-sft-mixture/val/input_ids_tulu.npy'],
-                    "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']
-                }
-            }
+        "tulu": {
+            "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
+            "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
+            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids_tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}}
         },
-        "alpaca" : {
-            "data_paths" : [
-                "tatsu-lab_alpaca/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "tatsu-lab_alpaca/train/label_mask.npy"
-            ],
-            "val" : {
-                "alpaca-validation": {
-                    "data": ['tatsu-lab_alpaca/val/input_ids_alpaca.npy'],
-                    "masks": ['tatsu-lab_alpaca/val/label_mask.npy']
-                }
-            }
+        "alpaca": {
+            "data_paths": ["tatsu-lab_alpaca/train/input_ids.npy"],
+            "mask_paths": ["tatsu-lab_alpaca/train/label_mask.npy"],
+            "val": {"alpaca-validation": {"data": ['tatsu-lab_alpaca/val/input_ids_alpaca.npy'], "masks": ['tatsu-lab_alpaca/val/label_mask.npy']}}
         },
-        "gsm8k" : {
-            "data_paths" : [
-                "openai_gsm8k_main/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "openai_gsm8k_main/train/label_mask.npy"
-            ],
-            "val" : {
-                "gsm8k-validation": {
-                    "data": ['openai_gsm8k_main/val/input_ids_gsm8k.npy'],
-                    "masks": ['openai_gsm8k_main/val/label_mask.npy']
-                }
-            }
+        "gsm8k": {
+            "data_paths": ["openai_gsm8k_main/train/input_ids.npy"],
+            "mask_paths": ["openai_gsm8k_main/train/label_mask.npy"],
+            "val": {"gsm8k-validation": {"data": ['openai_gsm8k_main/val/input_ids_gsm8k.npy'], "masks": ['openai_gsm8k_main/val/label_mask.npy']}}
         },
-        "siqa" : {
-            "data_paths" : [
-                "social_i_qa/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "social_i_qa/train/label_mask.npy"
-            ],
-            "val" : {
-                "siqa-validation": {
-                    "data": ['social_i_qa/val/input_ids.npy'],
-                    "masks": ['social_i_qa/val/label_mask.npy']
-                }
-            }
+        "siqa": {
+            "data_paths": ["social_i_qa/train/input_ids.npy"],
+            "mask_paths": ["social_i_qa/train/label_mask.npy"],
+            "val": {"siqa-validation": {"data": ['social_i_qa/val/input_ids.npy'], "masks": ['social_i_qa/val/label_mask.npy']}}
         },
-        "rte" : {
-            "data_paths" : [
-                "SetFit_rte/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "SetFit_rte/train/label_mask.npy"
-            ],
-            "val" : {
-                "rte-validation": {
-                    "data": ['SetFit_rte/val/input_ids.npy'],
-                    "masks": ['SetFit_rte/val/label_mask.npy']
-                }
-            }
+        "rte": {
+            "data_paths": ["SetFit_rte/train/input_ids.npy"],
+            "mask_paths": ["SetFit_rte/train/label_mask.npy"],
+            "val": {"rte-validation": {"data": ['SetFit_rte/val/input_ids.npy'], "masks": ['SetFit_rte/val/label_mask.npy']}}
         },
-        "tinygsm" : {
-            "data_paths" : [
-                "TinyGSM_TinyGSM/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "TinyGSM_TinyGSM/train/label_mask.npy"
-            ],
-            "val" : {
-                "tinygsm-validation": {
-                    "data": ['TinyGSM_TinyGSM/val/input_ids.npy'],
-                    "masks": ['TinyGSM_TinyGSM/val/label_mask.npy']
-                }
-            }
+        "tinygsm": {
+            "data_paths": ["TinyGSM_TinyGSM/train/input_ids.npy"],
+            "mask_paths": ["TinyGSM_TinyGSM/train/label_mask.npy"],
+            "val": {"tinygsm-validation": {"data": ['TinyGSM_TinyGSM/val/input_ids.npy'], "masks": ['TinyGSM_TinyGSM/val/label_mask.npy']}}
         },
     },
-    "dclm" : {
-        "starcoder" : {
-            "data_paths" : [
-                "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-000-00000.npy"
-            ],
-            "mask_paths" : [],
-            "val" : {
-                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
-            }
+    "dclm": {
+        "tulu": {
+            "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
+            "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
+            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}}
         },
-        "starcoder2" : {
-            "data_paths" : [
-                "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-001-00000.npy"
-            ],
-            "val" : {
-                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
-            }
+        "starcoder": {
+            "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
+            "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
+            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}}
         },
-        "starcoder3" : {
-            "data_paths" : [
-                "starcoder/train/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-002-00000.npy"
-            ],
-            "val" : {
-                "starcoder-validation": ['starcoder/val/preprocessed_starcoder_v1-decon-100_to_20k-2star-top_token_030_allenai_dolma2-tokenizer_part-010-00000-20M.npy'],
-            }
-        },
-        "proofpile" : {
-            "data_paths" : [
-                "proofpile/train/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-00-00000.npy"
-            ],
-            "mask_paths" : [],
-            "val" : {
-                "proofpile-validation": ['proofpile/val/preprocessed_proof-pile-2_v0_decontaminated_arxiv_train_allenai_dolma2-tokenizer_part-01-00000-2M.npy'],
-            }
-        },
-        "tinygsm" : {
-            "data_paths": [
-                "tinygsm/train/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-00-00000.npy"
-            ],
-            "mask_paths": [
-                "tinygsm/train/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-00-00000-label_mask.npy"
-            ],
-            "val" : {
-                "tinygsm-validation": ["tinygsm/val/preprocessed_tinyGSM_mind_dolma2-tokenizer_part-01-00000-2M.npy"]
-            }
-        },
-        "tulu" : {
-            "data_paths" : [
-                "allenai_tulu-3-sft-mixture/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "allenai_tulu-3-sft-mixture/train/label_mask.npy"
-            ],
-            "val" : {
-                "tulu-validation": ['allenai_tulu-3-sft-mixture/val/input_ids.npy'],
-            }
-        },
-        "alpaca" : {
-            "data_paths" : [
-                "tatsu-lab_alpaca/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "tatsu-lab_alpaca/train/label_mask.npy"
-            ],
-            "val" : {
-                "alpaca-validation": ['tatsu-lab_alpaca/val/input_ids.npy'],
-            }
-        },
-        "gsm8k" : {
-            "data_paths" : [
-                "openai_gsm8k_main/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "openai_gsm8k_main/train/label_mask.npy"
-            ],
-            "val" : {
-                "gsm8k-validation": ['openai_gsm8k_main/val/input_ids.npy'],
-            }
-        },
-        "siqa" : {
-            "data_paths" : [
-                "social_i_qa/train/input_ids.npy"
-            ],
-            "mask_paths" : [
-                "social_i_qa/train/label_mask.npy"
-            ],
-            "val" : {
-                "siqa-validation": ['social_i_qa/val/input_ids.npy'],
-            }
-        }
     }
 }
 
-for train_dataset in LIST_OF_PRETRAIN_FILES.keys():
+# Merge pretrain validation sets into CPT dictionaries
+for base in LIST_OF_PRETRAIN_FILES:
+    base_val = LIST_OF_PRETRAIN_FILES[base]["val"]
+    for cpt in LIST_OF_CPT_FILES.get(base, {}):
+        LIST_OF_CPT_FILES[base][cpt]["val"].update(base_val)
 
-    val_dataset = LIST_OF_PRETRAIN_FILES[train_dataset]["val"]
-    cpt_datasets = LIST_OF_CPT_FILES[train_dataset]
 
-    for cpt_dataset in cpt_datasets.keys():
-        cpt_datasets[cpt_dataset]["val"].update(val_dataset)
+# --- Helper Functions ---
 
-    LIST_OF_CPT_FILES[train_dataset] = cpt_datasets
-
-BILLION = 1000**3
-MILLION = 1000**2
-
-def get_train_files(dataset_name, n_tokens, train_stage='stable'):
-
-    dataset_info = LIST_OF_PRETRAIN_FILES[dataset_name]
-    tokens_per_file = dataset_info["tokens_per_file"]
-    if train_stage == 'stable':
-        data_paths = dataset_info["data_paths"]
-    else:
-        data_paths = dataset_info["anneal_data_paths"]
-
-    n_files = min(math.ceil(n_tokens*BILLION / tokens_per_file) + 1, len(data_paths))
+def get_train_files(dataset_name: str, n_tokens_billion: int, train_stage: str = 'stable') -> List[str]:
+    info = LIST_OF_PRETRAIN_FILES[dataset_name]
+    data_source = info["data_paths"] if train_stage == 'stable' else info["anneal_data_paths"]
+    
+    n_files = min(math.ceil(n_tokens_billion * BILLION / info["tokens_per_file"]) + 1, len(data_source))
     log.info(f"Downloading {n_files} files from {dataset_name.upper()}")
-    return data_paths[:n_files]
+    return data_source[:n_files]
 
+
+# --- Artifact Classes ---
 
 @dataclass(frozen=True)
 class PretrainedModel(Artifact):
@@ -286,12 +131,11 @@ class PretrainedModel(Artifact):
     scheduler_t_warmup: int = 5000
     scheduler_alpha_f: float = 0.1
     pretrain_gpus: int = 8
-    muon_learning_rate: float = 5e-1 #EDIT
+    muon_learning_rate: float = 5e-1
     muon_momentum: float = 0.95
     muon_weight_decay: float = 0.1
     train_dataset: str = "dclm"
- 
-    
+
     @property
     def relpath(self) -> str:
         return f'PretrainedModel/{self.run_name}'
@@ -304,93 +148,72 @@ class PretrainedModel(Artifact):
     def run_name(self) -> str:
         lr_str = f'{self.learning_rate:.0e}'.replace('e-0', 'e-')
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
-        bs_str = str(self.batch_size)
         tk_str = f'{self.train_tokens}B'
-
-        final_run_name = f'OLMo-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
+        
+        name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        
         if self.optimizer == 'sam':
-            final_run_name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
-            final_run_name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
-        if self.optimizer =='muon':
-            final_run_name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
+            name = f'OLMo-{self.model_size}-tk{tk_str}-sam_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+            name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
+        elif self.optimizer == 'muon':
+            name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
+            
+        return name
 
-        return final_run_name 
-    
     @property
     def exists(self) -> bool:
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
             
-        gs_path: str = cast(str, Project.config.GS_PATH)
-        remote_path = os.path.join(gs_path, self.checkpoint_relpath)
-        
-        # Get remote files only from PretrainedModel folder (much faster than entire bucket)
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
         remote_files = G.get_remote_files(subfolder='PretrainedModel')
-        exists = any(f.startswith(remote_path) for f in remote_files)
         
-        if exists:
-            log.info(f"[PretrainedModel] ✓ Checkpoint EXISTS: {self.run_name}")
-        else:
-            log.info(f"[PretrainedModel] ❌ Checkpoint NOT found: {self.run_name}")
-        
-        return exists
-    
-    def get_requirements(self):
+        found = any(f.startswith(remote_path) for f in remote_files)
+        status = "✓ EXISTS" if found else "❌ NOT found"
+        log.info(f"[PretrainedModel] {status}: {self.run_name}")
+        return found
+
+    def get_requirements(self) -> Dict[str, Any]:
         return {
-            # 'gpus': self.pretrain_gpus,
             "gres": f"gpu:{self.pretrain_gpus}",
-            'nodes': 1,
-            'cpus': max(1, self.pretrain_gpus * 2),
-            'mem': '64GB',
-            'requeue': True,
-            'partition': 'flame',
-            'qos': 'flame-16gpu_qos',
-            'account': 'aditirag',
+            "nodes": 1,
+            "cpus": max(1, self.pretrain_gpus * 2),
+            "mem": '64GB',
+            "requeue": True,
+            "partition": 'flame',
+            "qos": 'flame-16gpu_qos',
+            "account": 'aditirag',
             "time": "12-00:00:00"
         }
-    
+
     def construct(self, builder: Task):
         local_output_path = G.get_random_local_path()
-        local_data_path = G.LOCAL_DATA_PATH
-
-        if G.DOWNLOAD_DATA:
-            local_data_path = local_output_path
-            
-        run_name = self.run_name
+        local_data_path = local_output_path if G.DOWNLOAD_DATA else G.LOCAL_DATA_PATH
+        
         save_folder = os.path.join(local_output_path, self.relpath)
-        gs_path: str = cast(str, G.GS_PATH)
-        remote_folder = os.path.join(gs_path, self.relpath)
+        remote_folder = os.path.join(cast(str, G.GS_PATH), self.relpath)
         
-        # Build training data paths from the training_data artifact set
-        train_data_paths = []
-        for train_data_path in get_train_files(self.train_dataset, self.train_tokens):
-            train_data_paths.append(
-                os.path.join(local_data_path, train_data_path)
-            )
+        # 1. Prepare Data Paths
+        train_data_paths = [os.path.join(local_data_path, p) for p in get_train_files(self.train_dataset, self.train_tokens)]
         
-        # Build eval datasets from validation_data
-        eval_datasets = dict()
-        for eval_dataset in LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]:
-            eval_datasets[eval_dataset] = [
-                os.path.join(local_data_path, eval_data_path)
-                for eval_data_path in LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"][eval_dataset]
-            ]
-        
-        # Create pretrain config using configuration utility
-        project_name: str = cast(str, G.PROJECT_NAME)
-        wandb_entity: str = cast(str, G.WANDB_ENTITY)
+        val_info = LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]
+        eval_datasets = {
+            k: [os.path.join(local_data_path, p) for p in v] if isinstance(v, list) else v  # Simplified for brevity
+            for k, v in val_info.items()
+        }
+        # Special handling for dict-based val sets (masks)
+        for k, v in val_info.items():
+            if isinstance(v, dict):
+                eval_datasets[k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
 
-        model_overrides = dict()
+        # 2. Config Overrides
+        model_overrides = {}
         if self.train_dataset == "dclm":
-            model_overrides = {
-                'vocab_size': 100278,
-                'embedding_size': 100352,
-                'eos_token_id': 100257,
-                'pad_token_id': 100277,
-            }
+            model_overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
 
+        # 3. Generate Config
         config = get_train_config(
-            run_name=run_name,
+            run_name=self.run_name,
             save_folder=save_folder,
             train_data_paths=train_data_paths,
             eval_datasets=eval_datasets,
@@ -398,9 +221,9 @@ class PretrainedModel(Artifact):
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
-            muon_learning_rate = self.muon_learning_rate,
-            muon_momentum = self.muon_momentum,
-            muon_weight_decay = self.muon_weight_decay,
+            muon_learning_rate=self.muon_learning_rate,
+            muon_momentum=self.muon_momentum,
+            muon_weight_decay=self.muon_weight_decay,
             sam_rho=self.sam_rho,
             sam_base_optimizer=self.sam_base_optimizer,
             max_duration=f"{self.train_tokens}e9T",
@@ -414,75 +237,47 @@ class PretrainedModel(Artifact):
             device_train_microbatch_size=32,
             eval_interval=20000,
             save_interval_unsharded=5000,
-            wandb_project=project_name,
-            wandb_entity=wandb_entity,
-            wandb_id=run_name,
+            wandb_project=cast(str, G.PROJECT_NAME),
+            wandb_entity=cast(str, G.WANDB_ENTITY),
+            wandb_id=self.run_name,
             wandb_resume='allow',
             try_load_latest_save=True,
             run_sync_cmd=True,
             tokenizer={
-                'identifier': 'tokenizers/allenai_dolma2.json' if self.train_dataset=='dclm' else 'tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json',
+                'identifier': f'tokenizers/allenai_{"dolma2" if self.train_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
                 'truncate_direction': 'right',
             }
         )
-        
-        # Set SYNC_CMD environment variable
-        builder.set_env("SYNC_CMD", f"gsutil -m rsync -r {save_folder}/ {remote_folder}/")
-        
-        # Ensure directory and save config
-        builder.ensure_directory(save_folder)
-        config_path = os.path.join(save_folder, 'config.yaml')
 
-        # Sync checkpoints from remote to local (if exists)
-        builder.rsync_from_gs(
-            remote_folder,
-            save_folder,
-            delete=True,
-            checksum=False,
-            skip_existing=False,
-            check_exists=True,  # Since the directory is already created above
-            contents=True
-        )
+        # 4. Sync & Execution
+        builder.set_env("SYNC_CMD", f"gsutil -m rsync -r {save_folder}/ {remote_folder}/")
+        builder.ensure_directory(save_folder)
         
+        builder.rsync_from_gs(remote_folder, save_folder, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
+        
+        config_path = os.path.join(save_folder, 'config.yaml')
         builder.create_yaml_file(config_path, config)
 
-        # Collect all data paths
-        all_data_paths = train_data_paths.copy()
-        for eval_paths in eval_datasets.values():
-            all_data_paths.extend(eval_paths)
-        
-        # Download directories from GS
+        # 5. Data Download
         if G.DOWNLOAD_DATA:
-            # Extract unique parent directories to download
-            parent_dirs = set()
+            all_paths = train_data_paths.copy()
+            for v in eval_datasets.values():
+                all_paths.extend(v if isinstance(v, list) else v['data'] + v.get('masks', []))
             
-            for local_file_path in all_data_paths:
-                parent_dir = os.path.dirname(local_file_path)
-                parent_dirs.add(parent_dir)
-            
-            # Download each unique parent directory
-            gs_data_path: str = cast(str, G.GS_DATA_PATH)
-            for local_dir in parent_dirs:
+            unique_dirs = {os.path.dirname(p) for p in all_paths}
+            gs_data_path = cast(str, G.GS_DATA_PATH)
+            for local_dir in unique_dirs:
                 gs_dir = local_dir.replace(local_data_path, gs_data_path)
                 builder.download_from_gs(gs_dir, local_dir, directory=True)
-        
-        # Setup OLMo environment and run training
-        olmo_path: str = cast(str, Project.config.OLMO_PATH)
+
+        olmo_path = cast(str, Project.config.OLMO_PATH)
         train_script = os.path.join(olmo_path, 'scripts', 'train.py')
         builder.run_command(
-            f'cd {olmo_path} && '
-            f'torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d --nproc_per_node={self.pretrain_gpus} {train_script} {config_path}'
-        )
-        
-        # Sync checkpoints from local to remote
-        builder.rsync_to_gs(
-            save_folder,
-            remote_folder,
-            delete=True,
-            checksum=False,
-            contents=True
+            f'cd {olmo_path} && torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d '
+            f'--nproc_per_node={self.pretrain_gpus} {train_script} {config_path}'
         )
 
+        builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
 @dataclass(frozen=True)
 class AnnealedModel(Artifact):
@@ -504,10 +299,7 @@ class AnnealedModel(Artifact):
 
     @property
     def run_name(self) -> str:
-        pretrained_model_name = self.pretrained_model.run_name
-        ckpt_str = f'ckpt{self.pretrain_ckpt_step}'
-        
-        return f'{pretrained_model_name}-anneal-{ckpt_str}'\
+        return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}'
     
     @property
     def train_dataset(self) -> str:
@@ -522,107 +314,77 @@ class AnnealedModel(Artifact):
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
             
-        gs_path: str = cast(str, Project.config.GS_PATH)
-        remote_path = os.path.join(gs_path, self.checkpoint_relpath)
-        
-        # Get remote files only from AnnealedModel folder
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
         remote_files = G.get_remote_files(subfolder='AnnealedModel')
         return any(f.startswith(remote_path) for f in remote_files)
 
-    def get_requirements(self):
+    def get_requirements(self) -> Dict[str, Any]:
         return {
             "gres": f"gpu:{self.anneal_gpus}",
-            'nodes': 1,
-            'cpus': max(1, self.anneal_gpus * 2),
-            'mem': '64GB',
-            'requeue': True,
-            'partition': 'flame',
-            'qos': 'flame-16gpu_qos',
-            'account': 'aditirag',
+            "nodes": 1,
+            "cpus": max(1, self.anneal_gpus * 2),
+            "mem": '64GB',
+            "requeue": True,
+            "partition": 'flame',
+            "qos": 'flame-16gpu_qos',
+            "account": 'aditirag',
             "time": "1-00:00:00"
         }
 
     def construct(self, builder: Task):
         local_output_path = G.get_random_local_path()
-        local_data_path = G.LOCAL_DATA_PATH
-
-        if G.DOWNLOAD_DATA:
-            local_data_path = local_output_path
-
-        run_name = self.run_name
+        local_data_path = local_output_path if G.DOWNLOAD_DATA else G.LOCAL_DATA_PATH
+        
         save_folder = os.path.join(local_output_path, self.relpath)
-        gs_path: str = cast(str, G.GS_PATH)
+        gs_path = cast(str, G.GS_PATH)
         remote_folder = os.path.join(gs_path, self.relpath)
 
-        # Load the checkpoint from the pretrained model
-        # Checkpoints are typically saved at: {relpath}/step-{step}-unsharded
-        pretrained_model_relpath = self.pretrained_model.relpath
-        checkpoint_step_path = f'{pretrained_model_relpath}/step{self.pretrain_ckpt_step}-unsharded'
-        pretrained_model_gs_path = os.path.join(gs_path, checkpoint_step_path)
-        local_checkpoint_path = os.path.join(local_output_path, checkpoint_step_path)
+        # 1. Checkpoint Resolution
+        # Path format: {pretrain_relpath}/step{step}-unsharded
+        ckpt_rel = f'{self.pretrained_model.relpath}/step{self.pretrain_ckpt_step}-unsharded'
+        pretrained_model_gs_path = os.path.join(gs_path, ckpt_rel)
+        local_checkpoint_path = os.path.join(local_output_path, ckpt_rel)
 
+        log.info(f"Downloading checkpoint from: {pretrained_model_gs_path}")
+        builder.rsync_from_gs(pretrained_model_gs_path, local_checkpoint_path, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
 
-        # Download the checkpoint
-        builder.rsync_from_gs(
-            pretrained_model_gs_path,
-            local_checkpoint_path,
-            delete=True,
-            checksum=False,
-            skip_existing=False,
-            check_exists=True,
-            contents=True
-        )
+        # 2. Annealing Token Calculation (10% of checkpoint tokens)
+        seq_len = 1024
+        tokens_at_ckpt = self.pretrain_ckpt_step * self.pretrained_model.batch_size * seq_len
+        anneal_tokens_billions = (tokens_at_ckpt * 0.1) / BILLION
 
-        # Calculate tokens at checkpoint: steps * batch_size * sequence_length
-        sequence_length = 1024
-        tokens_at_ckpt = self.pretrain_ckpt_step * self.pretrained_model.batch_size * sequence_length
-        
-        # Take 10% of tokens for annealing
-        anneal_tokens = tokens_at_ckpt * 0.1
-        
-        # Convert to billions for get_train_files and max_duration
-        anneal_tokens_billions = anneal_tokens / BILLION
+        # 3. Data Preparation
+        train_data_paths = [
+            os.path.join(local_data_path, p) 
+            for p in get_train_files(self.train_dataset, anneal_tokens_billions, train_stage='decay')
+        ]
 
-        # Build training data paths from the training_data artifact set
-        train_data_paths = []
-        for train_data_path in get_train_files(self.train_dataset, anneal_tokens_billions, train_stage='decay'):
-            train_data_paths.append(
-                os.path.join(local_data_path, train_data_path)
-            )
+        val_info = LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]
+        eval_datasets = {}
+        for k, v in val_info.items():
+            if isinstance(v, list):
+                eval_datasets[k] = [os.path.join(local_data_path, p) for p in v]
+            elif isinstance(v, dict):
+                eval_datasets[k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
 
-        # Build eval datasets from validation_data
-        eval_datasets = dict()
-        for eval_dataset in LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]:
-            eval_datasets[eval_dataset] = [
-                os.path.join(local_data_path, eval_data_path)
-                for eval_data_path in LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"][eval_dataset]
-            ]
-
-        # Create config using configuration utility
-        project_name: str = cast(str, G.PROJECT_NAME)
-        wandb_entity: str = cast(str, G.WANDB_ENTITY)
-
-        model_overrides = dict()
+        # 4. Config Overrides
+        model_overrides = {}
         if self.train_dataset == "dclm":
-            model_overrides = {
-                'vocab_size': 100278,
-                'embedding_size': 100352,
-                'eos_token_id': 100257,
-                'pad_token_id': 100277,
-            }
+            model_overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
 
+        # 5. Generate Configuration
         config = get_train_config(
-            run_name=run_name,
+            run_name=self.run_name,
             save_folder=save_folder,
             train_data_paths=train_data_paths,
             eval_datasets=eval_datasets,
-            model_size=self.pretrained_model.model_size,
+            model_size=self.model_size,
             optimizer=self.pretrained_model.optimizer,
             learning_rate=self.pretrained_model.learning_rate,
             weight_decay=self.pretrained_model.weight_decay,
-            muon_learning_rate = self.pretrained_model.muon_learning_rate,
-            muon_momentum = self.pretrained_model.muon_momentum,
-            muon_weight_decay = self.pretrained_model.muon_weight_decay,
+            muon_learning_rate=self.pretrained_model.muon_learning_rate,
+            muon_momentum=self.pretrained_model.muon_momentum,
+            muon_weight_decay=self.pretrained_model.muon_weight_decay,
             sam_rho=self.pretrained_model.sam_rho,
             sam_base_optimizer=self.pretrained_model.sam_base_optimizer,
             max_duration=f"{anneal_tokens_billions}e9T",
@@ -635,77 +397,51 @@ class AnnealedModel(Artifact):
             device_train_microbatch_size=32,
             eval_interval=5000,
             save_interval_unsharded=5000,
-            wandb_project=project_name,
-            wandb_entity=wandb_entity,
-            wandb_id=run_name,
+            wandb_project=cast(str, G.PROJECT_NAME),
+            wandb_entity=cast(str, G.WANDB_ENTITY),
+            wandb_id=self.run_name,
             wandb_resume='allow',
             load_path=local_checkpoint_path,
-            reset_optimizer_state=False,  # Keep optimizer state from checkpoint
+            reset_optimizer_state=False,  # Essential for maintaining momentum in WSD
             restore_dataloader=False,
             try_load_latest_save=True,
             run_sync_cmd=True,
             tokenizer={
-                'identifier': 'tokenizers/allenai_dolma2.json' if self.train_dataset=='dclm' else 'tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json',
+                'identifier': f'tokenizers/allenai_{"dolma2" if self.train_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
                 'truncate_direction': 'right',
             }
         )
 
-        # Set SYNC_CMD environment variable
+        # 6. Execution & Sync
         builder.set_env("SYNC_CMD", f"gsutil -m rsync -r {save_folder}/ {remote_folder}/")
-
-        # Ensure directory and save config
         builder.ensure_directory(save_folder)
+        
+        # Pull existing results for this specific anneal run if it crashed
+        builder.rsync_from_gs(remote_folder, save_folder, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
+        
         config_path = os.path.join(save_folder, 'config.yaml')
-
-        # Sync checkpoints from remote to local (if exists)
-        builder.rsync_from_gs(
-            remote_folder,
-            save_folder,
-            delete=True,
-            checksum=False,
-            skip_existing=False,
-            check_exists=True,
-            contents=True
-        )
-
         builder.create_yaml_file(config_path, config)
 
-        # Collect all data paths
-        all_data_paths = train_data_paths.copy()
-        for eval_paths in eval_datasets.values():
-            all_data_paths.extend(eval_paths)
-
-        # Download directories from GS
+        # 7. Data Downloads
         if G.DOWNLOAD_DATA:
-            # Extract unique parent directories to download
-            parent_dirs = set()
-
-            for local_file_path in all_data_paths:
-                parent_dir = os.path.dirname(local_file_path)
-                parent_dirs.add(parent_dir)
-
-            # Download each unique parent directory
-            gs_data_path: str = cast(str, G.GS_DATA_PATH)
-            for local_dir in parent_dirs:
+            all_paths = train_data_paths.copy()
+            for v in eval_datasets.values():
+                all_paths.extend(v if isinstance(v, list) else v['data'] + v.get('masks', []))
+            
+            unique_dirs = {os.path.dirname(p) for p in all_paths}
+            gs_data_path = cast(str, G.GS_DATA_PATH)
+            for local_dir in unique_dirs:
                 gs_dir = local_dir.replace(local_data_path, gs_data_path)
                 builder.download_from_gs(gs_dir, local_dir, directory=True)
 
-        # Setup OLMo environment and run training
-        olmo_path: str = cast(str, Project.config.OLMO_PATH)
+        olmo_path = cast(str, Project.config.OLMO_PATH)
         train_script = os.path.join(olmo_path, 'scripts', 'train.py')
         builder.run_command(
-            f'cd {olmo_path} && '
-            f'torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d --nproc_per_node={self.anneal_gpus} {train_script} {config_path}'
+            f'cd {olmo_path} && torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d '
+            f'--nproc_per_node={self.anneal_gpus} {train_script} {config_path}'
         )
 
-        # Sync checkpoints from local to remote
-        builder.rsync_to_gs(
-            save_folder,
-            remote_folder,
-            delete=True,
-            checksum=False,
-            contents=True
-        )
+        builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
 
 @dataclass(frozen=True)
@@ -733,124 +469,73 @@ class CPTModel(Artifact):
         return f'{self.relpath}/final-unsharded'
 
     @property
+    def run_name(self) -> str:
+        pre_name = self.pretrained_model.run_name
+        lr_str = f'{self.learning_rate:.0e}'.replace('e-0', 'e-')
+        wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
+        
+        name = f'{pre_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        if self.optimizer == 'muon':
+            muon_lr = f'{self.muon_learning_rate:.2e}'.replace('e-0', 'e-')
+            name += f'-muon_lr{muon_lr}'
+        return name
+
+    @property
     def exists(self) -> bool:
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
-            
-        gs_root: str = cast(str, Project.config.GS_PATH)
-        remote_path = os.path.join(gs_root, self.checkpoint_relpath)
-        
-        # Get remote files only from CPTModel folder
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
         remote_files = G.get_remote_files(subfolder='CPTModel')
-        exists = any(f.startswith(remote_path) for f in remote_files)
-        
-        if exists:
-            log.info(f"[CPTModel] ✓ Checkpoint EXISTS: {self.cpt_dataset}")
-        else:
-            log.info(f"[CPTModel] ❌ Checkpoint NOT found: {self.cpt_dataset}")
-        
-        return exists
+        found = any(f.startswith(remote_path) for f in remote_files)
+        log.info(f"[CPTModel] {'✓ EXISTS' if found else '❌ NOT found'}: {self.cpt_dataset}")
+        return found
 
-    @property
-    def run_name(self) -> str:
-        pretrained_model_name = self.pretrained_model.run_name
-
-        #EDITED FOR MUON
-        
-        lr_str = f'{self.learning_rate:.2e}'.replace('e-0', 'e-')
-        muon_lr_str = f'{self.muon_learning_rate:.2e}'.replace('e-0', 'e-')
-        wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
-        bs_str = str(self.batch_size)
-
-        if self.optimizer == 'muon':
-            return f'{pretrained_model_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{bs_str}-muon_lr{muon_lr_str}'
-        
-        return f'{pretrained_model_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{bs_str}'
-
-
-    def get_requirements(self):
+    def get_requirements(self) -> Dict[str, Any]:
         return {
-            'gpus': f"{self.cpt_gpus}", #A100_40GB:
+            'gpus': str(self.cpt_gpus),
             'nodes': 1,
             'cpus': self.cpt_gpus * 2,
             'mem': '64GB',
-            # "gres": f"gpu:{self.cpt_gpus}",
-            # 'nodes': 1,
-            # 'cpus': self.cpt_gpus * 2,
-            # 'mem': '64GB',
             'requeue': True,
-            'partition': 'preempt',
-            # "time": "1-00:00:00"
+            'partition': 'preempt'
         }
 
     def construct(self, builder: Task):
-        local_data_path = G.get_random_local_path()
-        run_name = self.run_name
-        save_folder = os.path.join(local_data_path, self.relpath)
-        gs_root: str = cast(str, Project.config.GS_PATH)
+        local_root = G.get_random_local_path()
+        save_folder = os.path.join(local_root, self.relpath)
+        gs_root = cast(str, Project.config.GS_PATH)
         remote_folder = os.path.join(gs_root, self.relpath)
 
-        pretrained_model_relpath = self.pretrained_model.checkpoint_relpath
-        pretrained_model_path = os.path.join(local_data_path, pretrained_model_relpath)
+        # 1. Load Pretrained Checkpoint
+        pre_ckpt_rel = self.pretrained_model.checkpoint_relpath
+        local_pre_path = os.path.join(local_root, pre_ckpt_rel)
+        builder.rsync_from_gs(os.path.join(gs_root, pre_ckpt_rel), local_pre_path, delete=True, checksum=True, skip_existing=True, check_exists=True, contents=True, )
+
+        # 2. Map CPT Data
+        dataset_info = LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]
+        train_paths = [os.path.join(local_root, p) for p in dataset_info["data_paths"]]
+        mask_paths = [os.path.join(local_root, p) for p in dataset_info["mask_paths"]]
         
-        builder.rsync_from_gs(
-            os.path.join(gs_root, pretrained_model_relpath),
-            pretrained_model_path,
-            delete=True,
-            checksum=True,
-            skip_existing=False,
-            check_exists=True,
-            contents=True
-        )
+        eval_datasets = {}
+        for k, v in dataset_info["val"].items():
+            paths = v.get("data", []) if isinstance(v, dict) else v
+            eval_datasets[k] = [os.path.join(local_root, p) for p in paths]
 
-        # Build training data paths from the training_data artifact
-        train_data_paths = []
-        for cpt_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["data_paths"]:
-            train_data_paths.append(os.path.join(local_data_path, cpt_data_path))
-
-        train_mask_paths = []
-        for cpt_data_path in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["mask_paths"]:
-            train_mask_paths.append(os.path.join(local_data_path, cpt_data_path))
-        
-        # Build eval datasets from validation_data
-        eval_datasets = dict()
-        for eval_dataset in LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["val"]:
-            val_data = LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]["val"][eval_dataset]
-            # Handle both old list format and new dict format with "data" and "masks"
-            if isinstance(val_data, dict):
-                eval_data_paths = val_data.get("data", [])
-            else:
-                eval_data_paths = val_data
-            
-            eval_datasets[eval_dataset] = [
-                os.path.join(local_data_path, eval_data_path)
-                for eval_data_path in eval_data_paths
-            ]
-
-        project_name: str = cast(str, Project.config.PROJECT_NAME)
-        wandb_entity: str = cast(str, Project.config.WANDB_ENTITY)
-
+        # 3. Step & Scheduler Math
         total_tokens = self.train_tokens * MILLION
-        batch_size = self.batch_size
-        max_sequence_length = 1024
-        # (Could be computed elsewhere via config gather, this covers common cases)
-        tokens_per_step = batch_size * max_sequence_length
-        total_steps = max(1, total_tokens // tokens_per_step)
-        scheduler_t_warmup = max(1, int(total_steps * 0.1))
+        total_steps = max(1, total_tokens // (self.batch_size * 1024))
+        warmup_steps = max(1, int(total_steps * 0.1))
 
-        model_overrides = dict()
+        # 4. Config & Overrides
+        overrides = {}
         if self.pretrained_model.train_dataset == "dclm":
-            model_overrides = {
-                'vocab_size': 100278,
-                'embedding_size': 100352,
-                'eos_token_id': 100257,
-                'pad_token_id': 100277,
-            }
+            overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
+
         config = get_train_config(
-            run_name=run_name,
+            run_name=self.run_name,
             save_folder=save_folder,
-            train_data_paths=train_data_paths,
-            train_data_label_mask_paths=train_mask_paths,
+            train_data_paths=train_paths,
+            train_data_label_mask_paths=mask_paths,
             eval_datasets=eval_datasets,
             model_size=self.pretrained_model.model_size,
             optimizer=self.optimizer,
@@ -860,60 +545,35 @@ class CPTModel(Artifact):
             muon_momentum=self.muon_momentum,
             muon_weight_decay=self.muon_weight_decay,
             max_duration=f'{self.train_tokens}e6T',
-            stop_at=None,
             seed=6198,
-            model_overrides=model_overrides,
+            model_overrides=overrides,
             scheduler_name=self.scheduler_name,
             scheduler_alpha_f=self.scheduler_alpha_f,
-            scheduler_t_warmup=scheduler_t_warmup,
+            scheduler_t_warmup=warmup_steps,
             global_train_batch_size=self.batch_size,
             device_train_microbatch_size=4,
             eval_interval=1000,
             save_interval_unsharded=1000,
-            wandb_project=project_name,
-            wandb_entity=wandb_entity,
-            wandb_id=run_name,
-            wandb_resume='allow',
-            load_path=pretrained_model_path,
+            wandb_project=cast(str, Project.config.PROJECT_NAME),
+            wandb_entity=cast(str, Project.config.WANDB_ENTITY),
+            wandb_id=self.run_name,
+            load_path=local_pre_path,
             reset_optimizer_state=True,
-            tokenizer={
-                'identifier': 'tokenizers/allenai_dolma2.json' if self.pretrained_model.train_dataset=='dclm' else 'tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json',
-                'truncate_direction': 'right',
-            }
+            tokenizer={'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrained_model.train_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json'}
         )
 
-        # Ensure directory and save config
+        # 5. Execute
         builder.ensure_directory(save_folder)
-        config_path = os.path.join(save_folder, 'config.yaml')
-        builder.create_yaml_file(config_path, config)
+        builder.create_yaml_file(os.path.join(save_folder, 'config.yaml'), config)
 
-        # Collect all data paths
-        all_data_paths = train_data_paths.copy()
-        all_data_paths.extend(train_mask_paths)
-        
-        for eval_paths in eval_datasets.values():
-            all_data_paths.extend(eval_paths)
-        
-        # Download directories from GS
-        for local_dir in all_data_paths:
-            gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
-            gs_dir = local_dir.replace(local_data_path, gs_data_path)
-            builder.download_from_gs(gs_dir, local_dir, directory=False)
-        
+        # Download all data (Train + Masks + Eval)
+        gs_data_path = cast(str, Project.config.GS_DATA_PATH)
+        for p in (train_paths + mask_paths + [item for sub in eval_datasets.values() for item in sub]):
+            builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
 
-        olmo_path: str = cast(str, Project.config.OLMO_PATH)
-        train_script = os.path.join(olmo_path, 'scripts', 'train.py')
-        builder.run_command(
-            f'cd {olmo_path} && '
-            f'torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d --nproc_per_node={self.cpt_gpus} {train_script} {config_path}'
-        )
-
-        # Upload the finetuned model to remote storage
-        builder.upload_to_gs(
-            save_folder,
-            remote_folder,
-            directory=True,
-        )
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        builder.run_command(f'cd {olmo_path} && torchrun --nproc_per_node={self.cpt_gpus} scripts/train.py {save_folder}/config.yaml')
+        builder.upload_to_gs(save_folder, remote_folder, directory=True)
 
 
 @dataclass(frozen=True)
@@ -924,159 +584,57 @@ class ModelEvaluation(Artifact):
 
     @property
     def relpath(self) -> str:
-        # Place results in ModelEvaluation folder, filename derived from model run name
         return f'ModelEvaluation/{self.model.run_name}-eval.json'
 
     @property
     def exists(self) -> bool:
-        # Always return False to force re-evaluation and overwrite existing results
-        return False
+        return False  # Force re-eval
 
-    def get_requirements(self):
-        return {
-            'gpus':1,
-            'nodes': 1,
-            'cpus': 2,
-            'mem': '16GB',
-            'requeue': True,
-            'partition': 'preempt',
-            # "gres": "gpu:1",
-            # 'nodes': 1,
-            # 'cpus': 2,
-            # 'mem': '16GB',
-            # 'requeue': True
-            "gres": "gpu:8",
-            'nodes': 1,
-            'cpus': 8,
-            'mem': '64GB',
-            'requeue': True,
-            'partition': 'flame',
-            'qos': 'flame-16gpu_qos',
-            'account': 'aditirag',
-            "time": "1-00:00:00"
-        }
+    def get_requirements(self) -> Dict[str, Any]:
+        return {'gpus': 1, 'nodes': 1, 'cpus': 2, 'mem': '16GB', 'partition': 'preempt', 'time': "1-00:00:00"}
 
     def construct(self, builder: Task):
-        # Create a unique local working directory to avoid collisions
-        
         local_root = G.get_random_local_path()
+        local_output = os.path.join(local_root, self.relpath)
+        builder.ensure_directory(os.path.dirname(local_output))
 
-        # Prepare local output path and ensure directory exists
-        local_output_path = os.path.join(local_root, self.relpath)
-        builder.ensure_directory(os.path.dirname(local_output_path))
+        # 1. Fetch Model
+        local_model = os.path.join(local_root, self.model.checkpoint_relpath)
+        builder.rsync_from_gs(os.path.join(cast(str, Project.config.GS_PATH), self.model.checkpoint_relpath), local_model, delete=False, checksum=False, skip_existing=False, check_exists=True, contents=True)
 
-        # Ensure model checkpoint is available locally (rsync from GS)
-        local_model_path = os.path.join(local_root, self.model.checkpoint_relpath)
-        gs_root: str = cast(str, Project.config.GS_PATH)
-        remote_model_path = os.path.join(gs_root, self.model.checkpoint_relpath)
-        builder.rsync_from_gs(
-            remote_model_path,
-            local_model_path,
-            delete=False,
-            checksum=False,
-            skip_existing=False,
-            check_exists=True,
-            contents=True
-        )
-
-        # Collect and download evaluation data files
-        local_eval_paths = []
-        local_mask_paths = []
+        # 2. Gather Eval Data (Unified Logic)
+        eval_meta = (LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.cpt_dataset]["val"] 
+                     if isinstance(self.model, CPTModel) else 
+                     LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"])
         
-        if isinstance(self.model, (PretrainedModel, AnnealedModel)):
-            for eval_dataset in LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"]:
-                val_data = LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"][eval_dataset]
-                # Handle both old list format and new dict format
-                if isinstance(val_data, dict):
-                    eval_paths = val_data.get("data", [])
-                    mask_paths = val_data.get("masks", [])
-                else:
-                    eval_paths = val_data
-                    mask_paths = []
+        target_evals, target_masks = [], []
+        gs_data_path = cast(str, Project.config.GS_DATA_PATH)
+
+        for meta in eval_meta.values():
+            paths = meta.get("data", []) if isinstance(meta, dict) else meta
+            masks = meta.get("masks", []) if isinstance(meta, dict) else []
+            
+            for i, p in enumerate(paths):
+                lp = os.path.join(local_root, p)
+                builder.download_from_gs(lp.replace(local_root, gs_data_path), lp, directory=False)
+                target_evals.append(lp)
                 
-                for i, eval_path in enumerate(eval_paths):
-                    local_eval_path = os.path.join(local_root, eval_path)
-                    local_eval_paths.append(local_eval_path)
-                    
-                    # Add mask if available
-                    if i < len(mask_paths):
-                        local_mask_path = os.path.join(local_root, mask_paths[i])
-                        local_mask_paths.append(local_mask_path)
-                    else:
-                        local_mask_paths.append(None)
-                        
-        elif isinstance(self.model, CPTModel):
-            cpt_val = LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.cpt_dataset]["val"]
-            for eval_dataset in cpt_val:
-                val_data = cpt_val[eval_dataset]
-                # Handle both old list format and new dict format
-                if isinstance(val_data, dict):
-                    eval_paths = val_data.get("data", [])
-                    mask_paths = val_data.get("masks", [])
+                if i < len(masks):
+                    lm = os.path.join(local_root, masks[i])
+                    builder.download_from_gs(lm.replace(local_root, gs_data_path), lm, directory=False)
+                    target_masks.append(lm)
                 else:
-                    eval_paths = val_data
-                    mask_paths = []
-                
-                for i, eval_path in enumerate(eval_paths):
-                    local_eval_path = os.path.join(local_root, eval_path)
-                    local_eval_paths.append(local_eval_path)
-                    
-                    # Add mask if available
-                    if i < len(mask_paths):
-                        local_mask_path = os.path.join(local_root, mask_paths[i])
-                        local_mask_paths.append(local_mask_path)
-                    else:
-                        local_mask_paths.append(None)
+                    target_masks.append('')
 
-        # Download each eval file from GS_DATA_PATH mirror
-        for local_path in local_eval_paths:
-            gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
-            gs_path_var = local_path.replace(local_root, gs_data_path)
-            builder.download_from_gs(gs_path_var, local_path, directory=False)
-        
-        # Download mask files if they exist
-        for local_mask_path in local_mask_paths:
-            if local_mask_path:
-                gs_data_path: str = cast(str, Project.config.GS_DATA_PATH)
-                gs_mask_path = local_mask_path.replace(local_root, gs_data_path)
-                # Download mask file
-                builder.download_from_gs(gs_mask_path, local_mask_path, directory=False)
-
-        # Build comma-separated list for evaluator
-        data_path_arg = ','.join(local_eval_paths)
-        
-        # Build comma-separated mask path list - must align with data paths
-        # Use empty string for data files without masks
-        mask_path_list = [m if m else '' for m in local_mask_paths]
-        mask_path_arg = ','.join(mask_path_list)
-
-        # Path to evaluation script
-        eval_script = os.path.join('catastrophic-forgetting', 'scripts', 'evaluate.py')
-
-        # Run evaluation with optional mask paths
-        eval_command_parts = [
-            'python', eval_script,
-            f"--model_path {local_model_path}",
-            f"--device {self.device}",
-            f"--data_path {data_path_arg}",
-            f"--chunk_size {self.chunk_size}",
-            f"--output_path {local_output_path}",
+        # 3. Run Command
+        cmd = [
+            'python', 'catastrophic-forgetting/scripts/evaluate.py',
+            f"--model_path {local_model}", f"--device {self.device}",
+            f"--data_path {','.join(target_evals)}", f"--chunk_size {self.chunk_size}",
+            f"--output_path {local_output}"
         ]
+        if any(target_masks):
+            cmd.append(f"--mask_path {','.join(target_masks)}")
         
-        # Only add mask_path if we have any non-None masks
-        if any(m for m in local_mask_paths if m):
-            eval_command_parts.append(f"--mask_path {mask_path_arg}")
-        
-        builder.run_command(' '.join(eval_command_parts))
-
-        # Upload results to GS
-        local_eval_dir = os.path.dirname(local_output_path)
-        gs_path: str = cast(str, Project.config.GS_PATH)
-        remote_eval_dir = os.path.join(gs_path, os.path.dirname(self.relpath))
-        builder.rsync_to_gs(
-            local_eval_dir,
-            remote_eval_dir,
-            delete=False,
-            checksum=False,
-            contents=True
-        )
+        builder.run_command(' '.join(cmd))
+        builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluation'), delete=False, checksum=False, contents=True)
