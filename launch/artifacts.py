@@ -40,7 +40,7 @@ LIST_OF_PRETRAIN_FILES = {
         ],
         "tokens_per_file": 3 * BILLION,
         "val": {
-            "dclm-validation": ['dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-20M.npy'],
+            "dclm-validation": ['dclm/val/dclm-20m.npy']
         }
     }
 }
@@ -87,12 +87,12 @@ LIST_OF_CPT_FILES = {
         "tulu": {
             "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
             "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
-            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}}
+            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask-tulu.npy']}}
         },
         "starcoder": {
             "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
             "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
-            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}}
+            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask-starcoder.npy']}}
         },
     }
 }
@@ -134,7 +134,7 @@ class PretrainedModel(Artifact):
     muon_learning_rate: float = 5e-1
     muon_momentum: float = 0.95
     muon_weight_decay: float = 0.1
-    train_dataset: str = "dclm"
+    pretrain_dataset: str = "dclm"
 
     @property
     def relpath(self) -> str:
@@ -150,10 +150,10 @@ class PretrainedModel(Artifact):
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
         tk_str = f'{self.train_tokens}B'
         
-        name = f'OLMo-{self.model_size}-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        name = f'OLMo2-{self.model_size}-tk{tk_str}-{self.optimizer}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
         
         if self.optimizer == 'sam':
-            name = f'OLMo-{self.model_size}-tk{tk_str}-sam_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+            name = f'OLMo2-{self.model_size}-tk{tk_str}-sam_{self.sam_base_optimizer}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
             name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
         elif self.optimizer == 'muon':
             name += f'-muon_lr{self.muon_learning_rate:.0e}'.replace('e-0', 'e-')
@@ -194,21 +194,25 @@ class PretrainedModel(Artifact):
         remote_folder = os.path.join(cast(str, G.GS_PATH), self.relpath)
         
         # 1. Prepare Data Paths
-        train_data_paths = [os.path.join(local_data_path, p) for p in get_train_files(self.train_dataset, self.train_tokens)]
+        train_data_paths = [os.path.join(local_data_path, p) for p in get_train_files(self.pretrain_dataset, self.train_tokens)]
         
-        val_info = LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]
-        eval_datasets = {
+        val_info = LIST_OF_PRETRAIN_FILES[self.pretrain_dataset]["val"]
+        eval_datasets = {}
+        eval_datasets["pretrain"] = {
             k: [os.path.join(local_data_path, p) for p in v] if isinstance(v, list) else v  # Simplified for brevity
             for k, v in val_info.items()
         }
+
         # Special handling for dict-based val sets (masks)
         for k, v in val_info.items():
             if isinstance(v, dict):
-                eval_datasets[k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
+                eval_datasets["pretrain"][k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
+        
+        eval_datasets["cpt"] = {}
 
         # 2. Config Overrides
         model_overrides = {}
-        if self.train_dataset == "dclm":
+        if self.pretrain_dataset == "dclm":
             model_overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
 
         # 3. Generate Config
@@ -244,9 +248,10 @@ class PretrainedModel(Artifact):
             try_load_latest_save=True,
             run_sync_cmd=True,
             tokenizer={
-                'identifier': f'tokenizers/allenai_{"dolma2" if self.train_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
+                'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
                 'truncate_direction': 'right',
-            }
+            },
+            dtype='uint32' if self.pretrain_dataset == "dclm" else 'uint16',
         )
 
         # 4. Sync & Execution
@@ -261,7 +266,7 @@ class PretrainedModel(Artifact):
         # 5. Data Download
         if G.DOWNLOAD_DATA:
             all_paths = train_data_paths.copy()
-            for v in eval_datasets.values():
+            for v in eval_datasets["pretrain"].values():
                 all_paths.extend(v if isinstance(v, list) else v['data'] + v.get('masks', []))
             
             unique_dirs = {os.path.dirname(p) for p in all_paths}
@@ -302,8 +307,8 @@ class AnnealedModel(Artifact):
         return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}'
     
     @property
-    def train_dataset(self) -> str:
-        return self.pretrained_model.train_dataset
+    def pretrain_dataset(self) -> str:
+        return self.pretrained_model.pretrain_dataset
     
     @property
     def model_size(self) -> str:
@@ -356,20 +361,22 @@ class AnnealedModel(Artifact):
         # 3. Data Preparation
         train_data_paths = [
             os.path.join(local_data_path, p) 
-            for p in get_train_files(self.train_dataset, anneal_tokens_billions, train_stage='decay')
+            for p in get_train_files(self.pretrain_dataset, anneal_tokens_billions, train_stage='decay')
         ]
 
-        val_info = LIST_OF_PRETRAIN_FILES[self.train_dataset]["val"]
+        val_info = LIST_OF_PRETRAIN_FILES[self.pretrain_dataset]["val"]
         eval_datasets = {}
+        eval_datasets["pretrain"] = {}
+        eval_datasets["cpt"] = {}
         for k, v in val_info.items():
             if isinstance(v, list):
-                eval_datasets[k] = [os.path.join(local_data_path, p) for p in v]
+                eval_datasets["pretrain"][k] = [os.path.join(local_data_path, p) for p in v]
             elif isinstance(v, dict):
-                eval_datasets[k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
+                eval_datasets["pretrain"][k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
 
         # 4. Config Overrides
         model_overrides = {}
-        if self.train_dataset == "dclm":
+        if self.pretrain_dataset == "dclm":
             model_overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
 
         # 5. Generate Configuration
@@ -407,9 +414,10 @@ class AnnealedModel(Artifact):
             try_load_latest_save=True,
             run_sync_cmd=True,
             tokenizer={
-                'identifier': f'tokenizers/allenai_{"dolma2" if self.train_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
+                'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
                 'truncate_direction': 'right',
-            }
+            },
+            dtype='uint32' if self.pretrain_dataset == "dclm" else 'uint16',
         )
 
         # 6. Execution & Sync
@@ -425,7 +433,7 @@ class AnnealedModel(Artifact):
         # 7. Data Downloads
         if G.DOWNLOAD_DATA:
             all_paths = train_data_paths.copy()
-            for v in eval_datasets.values():
+            for v in eval_datasets["pretrain"].values():
                 all_paths.extend(v if isinstance(v, list) else v['data'] + v.get('masks', []))
             
             unique_dirs = {os.path.dirname(p) for p in all_paths}
@@ -467,6 +475,10 @@ class CPTModel(Artifact):
     @property
     def checkpoint_relpath(self) -> str:
         return f'{self.relpath}/final-unsharded'
+
+    @property
+    def pretrain_dataset(self) -> str:
+        return self.pretrained_model.pretrain_dataset
 
     @property
     def run_name(self) -> str:
@@ -512,14 +524,24 @@ class CPTModel(Artifact):
         builder.rsync_from_gs(os.path.join(gs_root, pre_ckpt_rel), local_pre_path, delete=True, checksum=True, skip_existing=True, check_exists=True, contents=True, )
 
         # 2. Map CPT Data
-        dataset_info = LIST_OF_CPT_FILES[self.pretrained_model.train_dataset][self.cpt_dataset]
+        dataset_info = LIST_OF_CPT_FILES[self.pretrain_dataset][self.cpt_dataset]
         train_paths = [os.path.join(local_root, p) for p in dataset_info["data_paths"]]
         mask_paths = [os.path.join(local_root, p) for p in dataset_info["mask_paths"]]
         
         eval_datasets = {}
+        eval_datasets["pretrain"] = {}
+        eval_datasets["cpt"] = {}
         for k, v in dataset_info["val"].items():
             paths = v.get("data", []) if isinstance(v, dict) else v
-            eval_datasets[k] = [os.path.join(local_root, p) for p in paths]
+            masks = v.get("masks", None) if isinstance(v, dict) else None
+            if masks is None:
+                eval_datasets["pretrain"][k] = [os.path.join(local_root, p) for p in paths]
+            else:
+                eval_datasets["cpt"][k] = {
+                    "data_paths" : [os.path.join(local_root, p) for p in paths],
+                    "mask_paths" : [os.path.join(local_root, m) for m in masks]
+                }
+
 
         # 3. Step & Scheduler Math
         total_tokens = self.train_tokens * MILLION
@@ -528,7 +550,7 @@ class CPTModel(Artifact):
 
         # 4. Config & Overrides
         overrides = {}
-        if self.pretrained_model.train_dataset == "dclm":
+        if self.pretrain_dataset == "dclm":
             overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
 
         config = get_train_config(
@@ -559,20 +581,26 @@ class CPTModel(Artifact):
             wandb_id=self.run_name,
             load_path=local_pre_path,
             reset_optimizer_state=True,
-            tokenizer={'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrained_model.train_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json'}
+            tokenizer={'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json'},
+            dtype='uint32' if self.pretrain_dataset == "dclm" else 'uint16',
         )
 
         # 5. Execute
         builder.ensure_directory(save_folder)
+        config_path = os.path.join(save_folder, 'config.yaml')
         builder.create_yaml_file(os.path.join(save_folder, 'config.yaml'), config)
 
         # Download all data (Train + Masks + Eval)
         gs_data_path = cast(str, Project.config.GS_DATA_PATH)
-        for p in (train_paths + mask_paths + [item for sub in eval_datasets.values() for item in sub]):
+        for p in (train_paths + mask_paths + [item for sub in eval_datasets["pretrain"].values() for item in sub] + [item for sub_dict in eval_datasets["cpt"].values() for sub_list in sub_dict.values() for item in sub_list]):
             builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
 
         olmo_path = cast(str, Project.config.OLMO_PATH)
-        builder.run_command(f'cd {olmo_path} && torchrun --nproc_per_node={self.cpt_gpus} scripts/train.py {save_folder}/config.yaml')
+        train_script = os.path.join(olmo_path, 'scripts', 'train.py')
+        builder.run_command(
+            f'cd {olmo_path} && '
+            f'torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d --nproc_per_node={self.cpt_gpus} {train_script} {config_path}'
+        )
         builder.upload_to_gs(save_folder, remote_folder, directory=True)
 
 
@@ -591,7 +619,7 @@ class ModelEvaluation(Artifact):
         return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gpus': 1, 'nodes': 1, 'cpus': 2, 'mem': '16GB', 'partition': 'preempt', 'time': "1-00:00:00"}
+        return {'gpus': 1, 'nodes': 1, 'cpus': 2, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
@@ -603,9 +631,9 @@ class ModelEvaluation(Artifact):
         builder.rsync_from_gs(os.path.join(cast(str, Project.config.GS_PATH), self.model.checkpoint_relpath), local_model, delete=False, checksum=False, skip_existing=False, check_exists=True, contents=True)
 
         # 2. Gather Eval Data (Unified Logic)
-        eval_meta = (LIST_OF_CPT_FILES[self.model.pretrained_model.train_dataset][self.model.cpt_dataset]["val"] 
+        eval_meta = (LIST_OF_CPT_FILES[self.model.pretrain_dataset][self.model.cpt_dataset]["val"] 
                      if isinstance(self.model, CPTModel) else 
-                     LIST_OF_PRETRAIN_FILES[self.model.train_dataset]["val"])
+                     LIST_OF_PRETRAIN_FILES[self.model.pretrain_dataset]["val"])
         
         target_evals, target_masks = [], []
         gs_data_path = cast(str, Project.config.GS_DATA_PATH)
@@ -627,14 +655,18 @@ class ModelEvaluation(Artifact):
                     target_masks.append('')
 
         # 3. Run Command
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        eval_script = os.path.join(olmo_path, 'scripts', 'evaluate.py')
         cmd = [
-            'python', 'catastrophic-forgetting/scripts/evaluate.py',
+            'python', eval_script,
             f"--model_path {local_model}", f"--device {self.device}",
             f"--data_path {','.join(target_evals)}", f"--chunk_size {self.chunk_size}",
             f"--output_path {local_output}"
         ]
         if any(target_masks):
             cmd.append(f"--mask_path {','.join(target_masks)}")
+        if self.model.pretrain_dataset == "dclm":
+            cmd.append(f"--dtype=uint32")
         
         builder.run_command(' '.join(cmd))
         builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluation'), delete=False, checksum=False, contents=True)

@@ -183,6 +183,7 @@ def get_train_config(
     wandb_id=None,
     wandb_resume='allow',
     run_sync_cmd=None,
+    dtype="uint16",
     **overrides
 ):
     """
@@ -323,6 +324,7 @@ def get_train_config(
             'timeout': 0,
             'generate_attention_mask': True,
             'paths': train_data_paths,
+            'memmap_dtype': dtype
         },
     }
     
@@ -339,14 +341,27 @@ def get_train_config(
     # Add evaluators if eval datasets are provided
     if eval_datasets:
         config['evaluators'] = [{
-            'label': 'validation-perplexity',
+            'label': 'pretrain-perplexity',
             'data': {
                 'num_workers': 0,
                 'drop_last': True,
-                'datasets': eval_datasets,
+                'datasets': eval_datasets["pretrain"],
                 'generate_attention_mask': True,
+                'memmap_dtype': dtype
             },
         }]
+        for k, v in eval_datasets["cpt"].items():
+            config['evaluators'].append({
+            'label': k,
+            'data': {
+                'num_workers': 0,
+                'drop_last': True,
+                'generate_attention_mask': True,
+                'paths': v["data_paths"],
+                'label_mask_paths': v["mask_paths"],
+                'memmap_dtype': dtype
+            },
+        })
 
     # Add label mask paths if provided
     if train_data_label_mask_paths:

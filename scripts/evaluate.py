@@ -13,10 +13,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 log = logging.getLogger(__name__)
 
 
-def evaluate_file(model: OLMo, data_path: str, chunk_size: int, device: torch.device, mask_path: str = None) -> float:
+def evaluate_file(model: OLMo, data_path: str, chunk_size: int, device: torch.device, mask_path: str = None, dtype: str = "uint16") -> float:
     """Evaluate model on a single data file."""
     # Load data using memmap
-    data = np.memmap(data_path, dtype=np.uint16, mode='r')
+    data = np.memmap(data_path, dtype=np.dtype(dtype), mode='r')
     
     # Load mask if provided
     mask = None
@@ -111,7 +111,8 @@ def main():
     parser.add_argument('--mask_path', type=str, default=None, help='Comma-separated paths to mask files (uint16 format, 0=ignore, 1=include). Must match order of data_path.')
     parser.add_argument('--chunk_size', type=int, required=True, help='Size of chunks to process')
     parser.add_argument('--output_path', type=str, required=True, help='Path to output JSON file')
-    
+    parser.add_argument('--dtype', type=str, default='uint16', help='Datatype of input data (e.g., uint16, uint8)')
+
     args = parser.parse_args()
     
     # Set device
@@ -143,7 +144,7 @@ def main():
     for idx, data_path in enumerate(data_paths):
         mask_path = mask_paths[idx] if idx < len(mask_paths) else None
         log.info(f"Evaluating on {data_path}" + (f" with mask {mask_path}" if mask_path else ""))
-        loss = evaluate_file(model, data_path, args.chunk_size, device, mask_path)
+        loss = evaluate_file(model, data_path, args.chunk_size, device, mask_path, dtype=args.dtype)
         
         # Extract filename without path and extension
         filename = Path(data_path).stem
