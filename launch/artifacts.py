@@ -87,12 +87,12 @@ LIST_OF_CPT_FILES = {
         "tulu": {
             "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
             "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
-            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask-tulu.npy']}}
+            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}}
         },
         "starcoder": {
             "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
             "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
-            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask-starcoder.npy']}}
+            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}}
         },
     }
 }
