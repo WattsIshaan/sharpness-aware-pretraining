@@ -6,10 +6,9 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:1 
 #SBATCH --partition=general
-#SBATCH --requeue
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate forgetting
@@ -18,48 +17,32 @@ conda activate forgetting
 SCRIPT_DIR="/home/iwatts/catastrophic-forgetting/new_utils"
 TOKENIZER_PATH="/home/iwatts/catastrophic-forgetting/olmo_data/tokenizers/allenai_dolma2.json"
 OUTPUT_BASE_DIR="/tmp/iwatts/tokenized_data"
-GCS_BUCKET="gs://cmu-gpucloud-jspringe/shared/datasets/OLMo"  # Update with your bucket
+GCS_BUCKET="gs://cmu-gpucloud-jspringe/shared/datasets/OLMo"
 
-# Tokenization parameters
-MAX_TOKENS=100000000  # 100M tokens 
-SEQ_LEN=1024          # Sequence length
-SEQ_LEN=1024          # Sequence length
-BUFFER_MULT=1.4       # Buffer multiplier for early stopping
+# --- Tokenization Parameters ---
+MAX_TOKENS=100000000 
+SEQ_LEN=1024
 
-# Create logs directory if it doesn't exist
+# Special Tokens (Adjust these if using a non-Dolma tokenizer)
+EOS_TOKEN_ID=100257
+PAD_TOKEN_ID=100277
+# -------------------------------
+
 mkdir -p logs
 
-# If a dataset is provided as argument, use it. Otherwise process all datasets
 if [ -n "$1" ]; then
     DATASETS=("$@")
 else
-    # Default datasets to process
-    # Format: "dataset_name" or "dataset_name:config_name"
-    declare -a DATASETS=(
-        "allenai/social_i_qa"
-        #"openai/gsm8k:main"
-         # Requires config (main or socratic)
-        # Other options:
-        # "bigcode/starcoderdata"  # For code data
-        # "HuggingFaceH4/ultrachat_200k"  # Chat data
-        # "HuggingFaceH4/ultrafeedback_binarized"  # Preference data
-    )
+    declare -a DATASETS=("m-a-p/MusicPile-sft") #"bigcode/starcoderdata" "allenai/tulu-3-sft-mixture")
 fi
 
-# Process each dataset
 for DATASET in "${DATASETS[@]}"; do
-    echo "================================================"
-    echo "Processing dataset: $DATASET"
-    echo "SLURM Job ID: $SLURM_JOB_ID"
-    echo "================================================"
-
-    # Create output directory for this dataset
-    # Replace / and : with _ for directory name
-    DATASET_NAME=$(echo $DATASET | sed 's/\//_/g' | sed 's/:/_/g')
-    OUTPUT_DIR="${OUTPUT_BASE_DIR}/${DATASET_NAME}"
+    DATASET_DIR_NAME=$(echo $DATASET | sed 's/\//_/g' | sed 's/:/_/g')
+    OUTPUT_DIR="${OUTPUT_BASE_DIR}/${DATASET_DIR_NAME}"
     mkdir -p $OUTPUT_DIR
 
-    # Run tokenization
+    echo "Starting processing for: $DATASET"
+    
     cd $SCRIPT_DIR
     python tokenize_data.py \
         $OUTPUT_DIR \
@@ -67,11 +50,8 @@ for DATASET in "${DATASETS[@]}"; do
         -t $TOKENIZER_PATH \
         -s $SEQ_LEN \
         -m $MAX_TOKENS \
-        -b $BUFFER_MULT \
+        --eos $EOS_TOKEN_ID \
+        --pad $PAD_TOKEN_ID \
         -j 8 \
         -g $GCS_BUCKET
-
-    echo "================================================"
-    echo "Completed processing: $DATASET"
-    echo "================================================"
 done
