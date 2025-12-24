@@ -94,6 +94,12 @@ LIST_OF_CPT_FILES = {
             "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
             "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}}
         },
+        "musicpile": {
+            "data_paths": ["musicpile/train/input_ids.npy"],
+            "mask_paths": ["musicpile/train/label_mask.npy"],
+            "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}}
+        },
+
     }
 }
 
@@ -483,7 +489,7 @@ class CPTModel(Artifact):
     @property
     def run_name(self) -> str:
         pre_name = self.pretrained_model.run_name
-        lr_str = f'{self.learning_rate:.0e}'.replace('e-0', 'e-')
+        lr_str = f'{self.learning_rate:.2e}'.replace('e-0', 'e-')
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
         
         name = f'{pre_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
