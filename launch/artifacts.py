@@ -181,15 +181,13 @@ class PretrainedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gres": f"gpu:{self.pretrain_gpus}",
+            "gpus": self.pretrain_gpus,
             "nodes": 1,
-            "cpus": max(1, self.pretrain_gpus * 2),
+            'cpus-per-task': max(1, self.pretrain_gpus * 2),
             "mem": '64GB',
             "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu_qos',
-            "account": 'aditirag',
-            "time": "12-00:00:00"
+            "partition": 'general',
+            "time": "2-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -244,7 +242,7 @@ class PretrainedModel(Artifact):
             scheduler_alpha_f=self.scheduler_alpha_f,
             scheduler_t_warmup=self.scheduler_t_warmup,
             global_train_batch_size=self.batch_size,
-            device_train_microbatch_size=32,
+            device_train_microbatch_size=4,
             eval_interval=20000,
             save_interval_unsharded=5000,
             wandb_project=cast(str, G.PROJECT_NAME),
@@ -299,6 +297,8 @@ class AnnealedModel(Artifact):
     pretrained_model: PretrainedModel
     pretrain_ckpt_step: int  # Step number of the checkpoint to load
     anneal_gpus: int = 8
+    anneal_steps: int = None
+    anneal_percent: int = None
 
     @property
     def relpath(self) -> str:
@@ -310,7 +310,10 @@ class AnnealedModel(Artifact):
 
     @property
     def run_name(self) -> str:
-        return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}'
+        if self.anneal_steps is not None:
+            return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}-steps{self.anneal_steps}'
+        if self.anneal_percent is not None:
+            return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}-percent{self.anneal_percent}'
     
     @property
     def pretrain_dataset(self) -> str:
@@ -331,18 +334,19 @@ class AnnealedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gres": f"gpu:{self.anneal_gpus}",
+            "gpus": f"A100_40GB:{self.anneal_gpus}",
             "nodes": 1,
             "cpus": max(1, self.anneal_gpus * 2),
             "mem": '64GB',
             "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu_qos',
-            "account": 'aditirag',
-            "time": "1-00:00:00"
+            "partition": 'general',
+            "time": "2-00:00:00"
         }
 
     def construct(self, builder: Task):
+
+        assert (self.anneal_steps is None or self.anneal_percent is None), "Specify either anneal steps or anneal percent"
+        assert not (self.anneal_steps is None and self.anneal_percent is None)
         local_output_path = G.get_random_local_path()
         local_data_path = local_output_path if G.DOWNLOAD_DATA else G.LOCAL_DATA_PATH
         
@@ -360,14 +364,21 @@ class AnnealedModel(Artifact):
         builder.rsync_from_gs(pretrained_model_gs_path, local_checkpoint_path, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
 
         # 2. Annealing Token Calculation (10% of checkpoint tokens)
-        seq_len = 1024
-        tokens_at_ckpt = self.pretrain_ckpt_step * self.pretrained_model.batch_size * seq_len
-        anneal_tokens_billions = (tokens_at_ckpt * 0.1) / BILLION
+        # seq_len = 1024
+        # tokens_at_ckpt = self.pretrain_ckpt_step * self.pretrained_model.batch_size * seq_len
+        # anneal_tokens_billions = (tokens_at_ckpt * 0.1) / BILLION
 
         # 3. Data Preparation
+        if self.anneal_steps is not None:
+            anneal_tokens = self.anneal_steps * 1024 * 256 / BILLION
+            max_duration = self.anneal_steps
+        else:
+            anneal_tokens = (self.anneal_percent * self.pretrain_ckpt_step / 100) * 1024 * 256 / BILLION
+            max_duration = int(self.anneal_percent * self.pretrain_ckpt_step / 100)
+
         train_data_paths = [
             os.path.join(local_data_path, p) 
-            for p in get_train_files(self.pretrain_dataset, anneal_tokens_billions, train_stage='decay')
+            for p in get_train_files(self.pretrain_dataset, int(anneal_tokens) + 1, train_stage='decay')
         ]
 
         val_info = LIST_OF_PRETRAIN_FILES[self.pretrain_dataset]["val"]
@@ -400,14 +411,14 @@ class AnnealedModel(Artifact):
             muon_weight_decay=self.pretrained_model.muon_weight_decay,
             sam_rho=self.pretrained_model.sam_rho,
             sam_base_optimizer=self.pretrained_model.sam_base_optimizer,
-            max_duration=f"{anneal_tokens_billions}e9T",
+            max_duration=max_duration,
             stop_at=None,
             seed=6198,
             model_overrides=model_overrides,
             scheduler_name='linear_with_warmup',
             scheduler_t_warmup=0,
             global_train_batch_size=self.pretrained_model.batch_size,
-            device_train_microbatch_size=32,
+            device_train_microbatch_size=4,
             eval_interval=5000,
             save_interval_unsharded=5000,
             wandb_project=cast(str, G.PROJECT_NAME),
@@ -512,7 +523,7 @@ class CPTModel(Artifact):
         return {
             'gpus': str(self.cpt_gpus),
             'nodes': 1,
-            'cpus': self.cpt_gpus * 2,
+            'cpus-per-task': self.cpt_gpus * 2,
             'mem': '64GB',
             'requeue': True,
             'partition': 'preempt'
@@ -625,7 +636,7 @@ class ModelEvaluation(Artifact):
         return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gpus': 1, 'nodes': 1, 'cpus': 2, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
+        return {'gpus': 1, 'nodes': 1, 'cpus-per-task': 2, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
