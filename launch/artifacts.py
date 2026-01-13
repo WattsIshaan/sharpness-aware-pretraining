@@ -40,7 +40,7 @@ LIST_OF_PRETRAIN_FILES = {
         ],
         "tokens_per_file": 3 * BILLION,
         "val": {
-            "dclm-validation": ['dclm/val/dclm-20m.npy']
+            "dclm-validation": ['dclm/val/dclm-20m.npy']#, 'dclm/val/dclm-train-20m.npy']
         }
     }
 }
@@ -103,6 +103,35 @@ LIST_OF_CPT_FILES = {
     }
 }
 
+PT_LR = {
+    20 : {
+        4: 3e-3,
+        8: 3e-3,
+        16: 3e-3,
+        32: 1e-3,
+        64: 1e-3,
+    },
+    60: {
+        12: 1e-3,
+        24: 1e-3,
+        48: 6e-4,
+        96: 6e-4,
+        192: 3e-4,
+    },
+    150: {
+        15: 1e-3,
+        30: 1e-3,
+        60: 6e-4,
+        120: 6e-4,
+    },
+    300: {
+        15: 1e-3,
+        30: 1e-3,
+        60: 1e-3,
+        120: 1e-3,
+    }
+}
+
 # Merge pretrain validation sets into CPT dictionaries
 for base in LIST_OF_PRETRAIN_FILES:
     base_val = LIST_OF_PRETRAIN_FILES[base]["val"]
@@ -128,7 +157,7 @@ class PretrainedModel(Artifact):
     train_tokens: int
     model_size: str = '20m'
     optimizer: str = 'adamw'
-    learning_rate: float = 6e-4
+    pt_lr: float = 6e-4
     weight_decay: float = 0.1
     sam_rho: float = 0.05
     sam_base_optimizer: str = 'adamw'
@@ -141,6 +170,13 @@ class PretrainedModel(Artifact):
     muon_momentum: float = 0.95
     muon_weight_decay: float = 0.1
     pretrain_dataset: str = "dclm"
+
+    @property
+    def learning_rate(self) -> float:
+        if self.pt_lr == -1:
+            return PT_LR[int(self.model_size[:-1])][self.train_tokens]
+        return self.pt_lr
+
 
     @property
     def relpath(self) -> str:
@@ -503,7 +539,7 @@ class CPTModel(Artifact):
         lr_str = f'{self.learning_rate:.2e}'.replace('e-0', 'e-')
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
         
-        name = f'{pre_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        name = f'{pre_name}-CPT-{self.cpt_dataset}-tk{self.train_tokens}M-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
         if self.optimizer == 'muon':
             muon_lr = f'{self.muon_learning_rate:.2e}'.replace('e-0', 'e-')
             name += f'-muon_lr{muon_lr}'
@@ -626,17 +662,28 @@ class ModelEvaluation(Artifact):
     model: "PretrainedModel | CPTModel | AnnealedModel"
     device: str = 'cuda'
     chunk_size: int = 1024
+    hf_model: bool = False
+    quant_bit: int = None
 
     @property
     def relpath(self) -> str:
+        if self.quant_bit is not None:
+            assert self.hf_model
+            return f'ModelEvaluation/{self.model.run_name}-quant-{self.quant_bit}bit-eval.json'
         return f'ModelEvaluation/{self.model.run_name}-eval.json'
 
     @property
     def exists(self) -> bool:
-        return False  # Force re-eval
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
+        remote_files = G.get_remote_files(subfolder='ModelEvaluation')
+        found = any(f.startswith(remote_path) for f in remote_files)
+        return found
+        # return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gpus': 1, 'nodes': 1, 'cpus-per-task': 2, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
+        return {'gpus': 1, 'nodes': 1, 'cpus-per-task': 4, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
@@ -684,6 +731,206 @@ class ModelEvaluation(Artifact):
             cmd.append(f"--mask_path {','.join(target_masks)}")
         if self.model.pretrain_dataset == "dclm":
             cmd.append(f"--dtype=uint32")
+        if self.hf_model:
+            cmd.append("--hf_model")
+            if self.quant_bit is not None:
+                cmd.append(f"--quantize={self.quant_bit}")
         
         builder.run_command(' '.join(cmd))
         builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluation'), delete=False, checksum=False, contents=True)
+
+
+@dataclass(frozen=True)
+class HFModel(Artifact):
+    """
+    Convert a `PretrainedModel` checkpoint to a HuggingFace-compatible format and upload to GS.
+    """
+    pretrained_model: PretrainedModel
+
+    @property
+    def run_name(self) -> str:
+        # Append `-hf` to the base pretrained run name.
+        return f"{self.pretrained_model.run_name}-hf"
+
+    @property
+    def relpath(self) -> str:
+        return f"HFModel/{self.run_name}"
+
+    @property
+    def checkpoint_relpath(self) -> str:
+        # Directory in GS where the converted HF checkpoint will live.
+        return self.relpath
+    
+    @property
+    def pretrain_dataset(self) -> str:
+        return self.pretrained_model.pretrain_dataset
+
+    @property
+    def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+
+        remote_root = cast(str, Project.config.GS_PATH)
+        remote_path = os.path.join(remote_root, self.relpath)
+        remote_files = G.get_remote_files(subfolder="HFModel")
+        return any(f.startswith(remote_path) for f in remote_files)
+
+    def get_requirements(self) -> Dict[str, Any]:
+        # Similar footprint to evaluation / light conversion.
+        return {
+            "gpus": 1,
+            "nodes": 1,
+            "cpus-per-task": 4,
+            "mem": "64GB",
+            "partition": "preempt",
+            "time": "1-00:00:00",
+        }
+
+    def construct(self, builder: Task):
+        local_root = G.get_random_local_path()
+        gs_root = cast(str, Project.config.GS_PATH)
+
+        # 1. Download the pretrained final-unsharded checkpoint locally.
+        src_ckpt_rel = self.pretrained_model.checkpoint_relpath  # e.g. PretrainedModel/<run>/final-unsharded
+        local_ckpt_dir = os.path.join(local_root, src_ckpt_rel)
+        builder.rsync_from_gs(
+            os.path.join(gs_root, src_ckpt_rel),
+            local_ckpt_dir,
+            delete=False,
+            checksum=False,
+            skip_existing=False,
+            check_exists=True,
+            contents=True,
+        )
+
+        # 2. Prepare local output directory for the converted HF checkpoint.
+        save_folder = os.path.join(local_root, self.relpath)
+        # builder.ensure_directory(save_folder)
+
+        # 3. Run the HF conversion script with the appropriate tokenizer.
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        convert_script = os.path.join(olmo_path, "hf_olmo", "convert_olmo_to_hf.py")
+
+        # Select tokenizer JSON based on the pretrain dataset.
+        tokenizer_dir = os.path.join(olmo_path, "olmo_data", "tokenizers")
+        if self.pretrain_dataset == "dclm":
+            tokenizer_file = "allenai_dolma2.json"
+        else:
+            tokenizer_file = "allenai_gpt-neox-olmo-dolma-v1_5.json"
+        tokenizer_path = os.path.join(tokenizer_dir, tokenizer_file)
+
+        cmd_parts = [
+            "python",
+            convert_script,
+            f"--checkpoint-dir {local_ckpt_dir}",
+            f"--destination-dir {save_folder}",
+            f"--tokenizer {tokenizer_path}",
+            "--keep-olmo-artifacts"
+        ]
+        builder.run_command(" ".join(cmd_parts))
+
+        # 4. Upload the converted HF model back to GS.
+        remote_folder = os.path.join(gs_root, self.relpath)
+        builder.upload_to_gs(save_folder, remote_folder, directory=True)
+
+
+# @dataclass(frozen=True)
+# class QuantizedModel(Artifact):
+#     """
+#     Quantize a `HFModel` checkpoint using GPTQ and upload to GS.
+#     """
+#     hf_model: HFModel
+#     bits: int
+
+#     @property
+#     def run_name(self) -> str:
+#         # Append `quant-{bits}bit` to the base HF model run name.
+#         return f"{self.hf_model.run_name}-quant-{self.bits}bit"
+
+#     @property
+#     def relpath(self) -> str:
+#         return f"QuantizedModel/{self.run_name}"
+
+#     @property
+#     def checkpoint_relpath(self) -> str:
+#         # Directory in GS where the quantized checkpoint will live.
+#         return self.relpath
+
+#     @property
+#     def pretrain_dataset(self) -> str:
+#         return self.hf_model.pretrain_dataset
+
+#     @property
+#     def exists(self) -> bool:
+#         return False
+#         if not Project.config.CHECK_EXISTS_REMOTE:
+#             return False
+
+#         remote_root = cast(str, Project.config.GS_PATH)
+#         remote_path = os.path.join(remote_root, self.relpath)
+#         remote_files = G.get_remote_files(subfolder="QuantizedModel")
+#         return any(f.startswith(remote_path) for f in remote_files)
+
+#     def get_requirements(self) -> Dict[str, Any]:
+#         # Quantization can be memory-intensive, similar to HF conversion.
+#         return {
+#             "gpus": 1,
+#             "nodes": 1,
+#             "cpus-per-task": 4,
+#             "mem": "64GB",
+#             "partition": "general",
+#             "time": "1-00:00:00",
+#         }
+
+#     def construct(self, builder: Task):
+#         local_root = G.get_random_local_path()
+#         gs_root = cast(str, Project.config.GS_PATH)
+#         local_data_path = local_root if G.DOWNLOAD_DATA else G.LOCAL_DATA_PATH
+
+#         # 1. Download the HF model checkpoint locally.
+#         src_ckpt_rel = self.hf_model.checkpoint_relpath  # e.g. HFModel/<run>-hf
+#         local_hf_dir = os.path.join(local_root, src_ckpt_rel)
+#         builder.rsync_from_gs(
+#             os.path.join(gs_root, src_ckpt_rel),
+#             local_hf_dir,
+#             delete=False,
+#             checksum=False,
+#             skip_existing=False,
+#             check_exists=True,
+#             contents=True,
+#         )
+
+#         # 2. Download calibration dataset (first anneal_data_path)
+#         pretrain_info = LIST_OF_PRETRAIN_FILES[self.pretrain_dataset]
+#         calibration_data_path_relative = pretrain_info["anneal_data_paths"][0]
+#         calibration_data_path = os.path.join(local_data_path, calibration_data_path_relative)
+        
+#         if G.DOWNLOAD_DATA:
+#             gs_data_path = cast(str, G.GS_DATA_PATH)
+#             gs_calibration_path = os.path.join(gs_data_path, calibration_data_path_relative)
+#             # Ensure parent directory exists
+#             builder.ensure_directory(os.path.dirname(calibration_data_path))
+#             builder.download_from_gs(gs_calibration_path, calibration_data_path, directory=False)
+
+#         # 3. Prepare local output directory for the quantized model.
+#         save_folder = os.path.join(local_root, self.relpath)
+#         builder.ensure_directory(save_folder)
+
+#         # 4. Run the quantization script.
+#         olmo_path = cast(str, Project.config.OLMO_PATH)
+#         quantize_script = os.path.join(olmo_path, "new_utils", "quantize_model.py")
+
+#         cmd_parts = [
+#             "python",
+#             quantize_script,
+#             f"--bits {self.bits}",
+#             f"--model-dir {local_hf_dir}",
+#             f"--quantized-dir {save_folder}",
+#             f"--calibration-data-path {calibration_data_path}",
+#             f"--pretrain-dataset {self.pretrain_dataset}",
+#         ]
+#         builder.run_command(" ".join(cmd_parts))
+
+#         # 5. Upload the quantized model back to GS.
+#         remote_folder = os.path.join(gs_root, self.relpath)
+#         builder.upload_to_gs(save_folder, remote_folder, directory=True)
