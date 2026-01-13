@@ -11,10 +11,12 @@ def build_annealed_models(pretrained_models: ArtifactSet) -> ArtifactSet:
                 pretrained_model=pretrained_model,
                 # pretrain_ckpt_step=[15000, 30000, 55000, 110000, 220000, 445000, 890000],
                 # pretrain_ckpt_step=[670000, 40000, 85000, 165000, 335000],
-                pretrain_ckpt_step=[85000],
-                anneal_gpus=4,
-                anneal_steps=[1000, 2000, 4000],
-                # anneal_percent=[5, 10, 20]
+                pretrain_ckpt_step=[40000, 85000],
+                # pretrain_ckpt_step=[610000, 35000, 75000, 155000, 305000],
+                # pretrain_ckpt_step=[45000, 90000, 175000, 350000, 700000],
+                anneal_gpus=8,
+                # anneal_steps=[1000, 2000, 40000],
+                anneal_percent=[10]
             )
         )
     )
