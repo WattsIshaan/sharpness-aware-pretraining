@@ -892,7 +892,8 @@ class Trainer:
 
         if isinstance(self.optim, SAM):
             self.optim.first_step(zero_grad=True)
-            ce_batch_loss, z_batch_loss = self.train_batch(batch)
+            # Second forward-backward pass for SAM - we don't log this loss
+            ce_batch_loss_sam, z_batch_loss_sam = self.train_batch(batch)
             self.optim.restore_original_params()
 
         # Collect loss, potentially reducing over all ranks.
