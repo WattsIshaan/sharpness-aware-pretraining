@@ -6,8 +6,11 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from olmo.model import OLMo
+from hf_olmo.modeling_olmo import OLMoForCausalLM
+from transformers import BitsAndBytesConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -49,7 +52,7 @@ def evaluate_file(model: OLMo, data_path: str, chunk_size: int, device: torch.de
     
     log.info(f"Processing {num_chunks} chunks from {data_path}" + (" with mask" if mask is not None else ""))
     
-    for i in range(num_chunks):
+    for i in tqdm(range(num_chunks)):
         start_idx = i * chunk_size
         end_idx = start_idx + chunk_size
         chunk = data[start_idx:end_idx]
@@ -112,6 +115,8 @@ def main():
     parser.add_argument('--chunk_size', type=int, required=True, help='Size of chunks to process')
     parser.add_argument('--output_path', type=str, required=True, help='Path to output JSON file')
     parser.add_argument('--dtype', type=str, default='uint16', help='Datatype of input data (e.g., uint16, uint8)')
+    parser.add_argument('--hf_model', action='store_true', help='If set, use Hugging Face model loading')
+    parser.add_argument('--quantize', type=int, default=None, help='Specify bits for quantized inference')
 
     args = parser.parse_args()
     
@@ -121,7 +126,13 @@ def main():
     
     # Load model
     log.info(f"Loading model from {args.model_path}")
-    model = OLMo.from_checkpoint(args.model_path, device=args.device)
+    if args.hf_model:
+        quantization_config = None
+        if args.quantize is not None:
+            quantization_config = BitsAndBytesConfig(load_in_8bit=args.quantize==8, load_in_4_bit=args.quantize==4)
+        model = OLMoForCausalLM.from_pretrained(args.model_path, device_map="auto", quantization_config=quantization_config) #.to(device)
+    else:
+        model = OLMo.from_checkpoint(args.model_path, device=args.device)
     model.eval()
     
     # Parse comma-separated data paths
