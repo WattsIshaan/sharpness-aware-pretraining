@@ -47,7 +47,7 @@ def main() -> int:
     parser.add_argument(
         "--gcs_dir",
         type=str,
-        default="gs://cmu-gpucloud-iwatts/outputs/large-scale-experiments/PerturbedModel",
+        default="gs://cmu-gpucloud-iwatts/outputs/60m-experiments/PerturbedModel",
         help="GCS directory path (e.g., gs://bucket/path/to/models)"
     )
     parser.add_argument(
@@ -59,13 +59,13 @@ def main() -> int:
     parser.add_argument(
         "--data_paths",
         type=str,
-        default="gs://cmu-gpucloud-jspringe/shared/datasets/OLMo/dclm/val/preprocessed_dclm_text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train_allenai_dolma2-tokenizer_part-187-00004-2M.npy",
+        default="gs://cmu-gpucloud-jspringe/shared/datasets/OLMo/dclm/val/dclm-20m.npy",
         help="Comma-separated GCS paths to evaluation data files (numpy uint16 format)"
     )
     parser.add_argument(
         "--output_gcs_dir",
         type=str,
-        default="gs://cmu-gpucloud-iwatts/outputs/large-scale-experiments/ModelEvaluation",
+        default="gs://cmu-gpucloud-iwatts/outputs/60m-experiments/ModelEvaluation",
         help="GCS directory path for storing results (default: gs://cmu-gpucloud-iwatts/outputs/large-scale-experiments/ModelEvaluation)"
     )
     parser.add_argument(
@@ -79,6 +79,11 @@ def main() -> int:
         type=str,
         default="cuda",
         help="Device to use for evaluation, e.g., 'cuda', 'cpu', or 'cuda:0'"
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="uint16",
     )
     
     args = parser.parse_args()
@@ -148,6 +153,7 @@ def main() -> int:
             f"--data_path", data_path_arg,
             f"--chunk_size", str(args.chunk_size),
             f"--output_path", local_output_path,
+            f"--dtype", args.dtype 
         ])
         
         log.info(f"✅ Evaluation complete")
