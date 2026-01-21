@@ -1,0 +1,136 @@
+from token import OP
+import matplotlib.pyplot as plt
+import os
+import json
+from scipy.spatial import ConvexHull
+import numpy as np
+
+from utils.config_globals import SIZE, CPT_DATASET, OPTIM, TOKEN_LIST, RESULTS_DIR, TRADEOFF_THRESHOLD
+from utils.plotting_globals import OPTIM_MAP, FONTSIZE, FIG_WIDTH, COLOR_MAP
+from utils.helper import get_run_info
+
+def make_tradeoff_summary(results):
+
+    for size in SIZE:
+        for cpt_dataset in CPT_DATASET:
+            plt.figure(figsize=(FIG_WIDTH * 1.5, 6))
+            tokens_list = TOKEN_LIST[size][::-1]
+
+            plotting_data = dict()
+            for optim in OPTIM:
+                plotting_data[optim] = {
+                    "x": [],
+                    "y": []
+                }
+
+            cpt_min = float('inf')
+            for i, t in enumerate(tokens_list):
+                for optim in OPTIM:
+                    run_info = get_run_info(results, size, optim, cpt_dataset)
+                    if run_info is None:
+                        print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]} for {cpt_dataset.capitalize()}")
+                        continue
+
+                    plotting_data[optim]["x"].append(run_info["pretrain"][t]["dclm_val"])
+                    plotting_data[optim]["tmp_x"] = []
+                    plotting_data[optim]["tmp_y"] = []
+
+                    cpt_lrs = sorted(run_info["cpt"].keys())
+                    for cpt_lr in cpt_lrs:
+                        cpt_wds = sorted(run_info["cpt"][cpt_lr].keys())
+                        for cpt_wd in cpt_wds:
+                            cpt_bss = sorted(run_info["cpt"][cpt_lr][cpt_wd].keys())
+                            for cpt_bs in cpt_bss:
+                                try:
+                                    x_val = run_info["cpt"][cpt_lr][cpt_wd][cpt_bs][t]["dclm_val"]
+                                    y_val = run_info["cpt"][cpt_lr][cpt_wd][cpt_bs][t][cpt_dataset]
+                                    if i == 0:
+                                        cpt_min = min(y_val, cpt_min)
+
+                                    plotting_data[optim]["tmp_x"].append(x_val)
+                                    plotting_data[optim]["tmp_y"].append(y_val)
+                                except:
+                                    continue
+                
+                
+                # print(f"Minimum CPT Val --> {cpt_min}, Threshold --> {cpt_threshold}")
+
+                for optim in OPTIM:
+                    points = np.empty((len(plotting_data[optim]["tmp_x"]), 2))
+                    points[:, 0] = plotting_data[optim]["tmp_x"]
+                    points[:, 1] = plotting_data[optim]["tmp_y"]
+                    hull = ConvexHull(points)
+
+                    h = np.append(hull.vertices, hull.vertices[0])
+
+                    new_points = np.empty((len(h), 2))
+                    new_points[:, 0] = points[h, 0]
+                    new_points[:, 1] = points[h, 1]
+                    # Rotate so that first row has the smallest first column value
+                    min_idx = np.argmin(new_points[:, 0])
+                    new_points = np.roll(new_points, -min_idx, axis=0)
+
+                    # for i, _ in enumerate(range(len(new_points)-1)):
+                    #     if new_points[i][0] > new_points[i+1][0]:
+                    #         new_points = new_points[:i+1, :]
+                    #         break
+
+                    hull_x, hull_y = new_points[:, 0], new_points[:, 1]
+                    additional_threshold = 0
+                    x_at_threshold = None
+                    while x_at_threshold is None:
+                        cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD + additional_threshold)
+                        for idx in range(len(hull_x) - 1):
+                            x1, x2 = hull_x[idx], hull_x[idx + 1]
+                            y1, y2 = hull_y[idx], hull_y[idx + 1]
+                            if (y1 - cpt_threshold) * (y2 - cpt_threshold) <= 0:
+                                if y2 != y1:
+                                    alpha = (cpt_threshold - y1) / (y2 - y1)
+                                    x_at_threshold = x1 + alpha * (x2 - x1)
+                                else:
+                                    x_at_threshold = x1
+                                break
+                        if x_at_threshold is None:
+                            print(f"Increasing Threshold for {OPTIM_MAP[optim]}, {t}B, {size}M, {cpt_dataset}")
+                            additional_threshold += TRADEOFF_THRESHOLD/10
+                    
+                    plotting_data[optim]["y"].append(x_at_threshold)
+
+            for optim in OPTIM:
+                plt.plot(
+                    plotting_data[optim]["x"],
+                    plotting_data[optim]["y"],
+                    marker="o",
+                    color=COLOR_MAP[optim],
+                    label=OPTIM_MAP[optim]
+                )
+            plt.grid(True)
+            plt.legend(fontsize=FONTSIZE["LEGEND"])
+            plt.title(f"OLMo-{size}M - {cpt_dataset.capitalize()}", fontsize=FONTSIZE["TITLE"])
+            plt.xlabel("DCLM Pretrain Val Loss", fontsize=FONTSIZE["AXIS"])
+            plt.ylabel("Thresholded DCLM Val Loss after FT", fontsize=FONTSIZE["AXIS"])
+            plt.tick_params(axis='both', which='major', labelsize=FONTSIZE["TICKS"])
+            plt.tick_params(axis='both', which='minor', labelsize=FONTSIZE["TICKS"])
+            plt.tight_layout()
+            os.makedirs(os.path.join(RESULTS_DIR, f"plots/tradeoff/{size}m"), exist_ok=True)
+            plt.savefig(os.path.join(RESULTS_DIR, f"plots/tradeoff/{size}m/{cpt_dataset}_tradeoff.png"), bbox_inches='tight')
+            plt.close()
+
+            
+
+
+
+
+
+
+def main():
+
+    with open(os.path.join(RESULTS_DIR, "final_results.json"), "r") as file:
+        results = json.load(file)
+
+    make_tradeoff_summary(results)
+
+
+
+if __name__ == "__main__":
+    main()
