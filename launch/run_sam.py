@@ -8,6 +8,7 @@ Project.init('60m-experiments2')
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
 from launch.artifacts import PretrainedModel, ModelEvaluation, HFModel
 from launch.cpt import build_cpt_models, build_cpt_model_evaluations
+from launch.perturb import build_perturbed_models, build_perturbed_model_evaluations
 from launch.quantize import build_quantized_model_evaluations
 from launch.anneal import build_annealed_models, build_anneal_model_evaluations
 
@@ -43,6 +44,10 @@ hf_model_evaluations = hf_models.map(lambda model: ModelEvaluation(model=model, 
 # Quantize HF Models
 quantized_models_evaluations = build_quantized_model_evaluations(hf_models)
 
+# Perturbed pretrained models and evaluations
+perturbed_models = build_perturbed_models(pretrained_models)
+perturbed_model_evaluations = build_perturbed_model_evaluations(perturbed_models)
+
 
 # Anneal Pretrained models
 # sam_annealed_models = build_annealed_models(sam_pretrained_models)
@@ -77,6 +82,9 @@ executor.stage('hf', hf_models)
 executor.stage('hf_eval', hf_model_evaluations)
 
 executor.stage('quant_eval', quantized_models_evaluations)
+
+executor.stage('perturb', perturbed_models)
+executor.stage('perturb_eval', perturbed_model_evaluations)
 
 # Stage Annealed SAM models and evaluations
 # executor.stage('anneal', annealed_models)

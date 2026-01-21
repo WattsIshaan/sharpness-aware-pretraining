@@ -122,14 +122,8 @@ PT_LR = {
         15: 1e-3,
         30: 1e-3,
         60: 6e-4,
-        120: 6e-4,
+        120: 3e-4,
     },
-    300: {
-        15: 1e-3,
-        30: 1e-3,
-        60: 1e-3,
-        120: 1e-3,
-    }
 }
 
 # Merge pretrain validation sets into CPT dictionaries
@@ -217,13 +211,15 @@ class PretrainedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gpus": self.pretrain_gpus,
+            "gres": f"gpu:{self.pretrain_gpus}",
             "nodes": 1,
-            'cpus-per-task': max(1, self.pretrain_gpus * 2),
+            "cpus": max(1, self.pretrain_gpus * 2),
             "mem": '64GB',
             "requeue": True,
-            "partition": 'general',
-            "time": "2-00:00:00"
+            "partition": 'flame',
+            "qos": 'flame-16gpu-c_qos',
+            "account": 'aditirag',
+            "time": "12-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -370,13 +366,15 @@ class AnnealedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gpus": f"A100_40GB:{self.anneal_gpus}",
+            "gres": f"gpu:{self.pretrain_gpus}",
             "nodes": 1,
-            "cpus": max(1, self.anneal_gpus * 2),
+            "cpus": max(1, self.pretrain_gpus * 2),
             "mem": '64GB',
             "requeue": True,
-            "partition": 'general',
-            "time": "2-00:00:00"
+            "partition": 'flame',
+            "qos": 'flame-16gpu-c_qos',
+            "account": 'aditirag',
+            "time": "12-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -658,8 +656,85 @@ class CPTModel(Artifact):
 
 
 @dataclass(frozen=True)
+class PerturbedModel(Artifact):
+    base_model: "PretrainedModel | AnnealedModel"
+    sigma: float
+    seed: int = 64
+    device: str = "cpu"
+
+    @staticmethod
+    def _format_sigma(sigma: float) -> str:
+        return f"{sigma:.2e}".replace("e-0", "e-").replace("e+0", "e+").replace(".", "_")
+
+    @property
+    def run_name(self) -> str:
+        return f"{self.base_model.run_name}_perturbed_{self._format_sigma(self.sigma)}"
+
+    @property
+    def relpath(self) -> str:
+        return f"PerturbedModel/{self.run_name}"
+
+    @property
+    def checkpoint_relpath(self) -> str:
+        return f"{self.relpath}/final-unsharded"
+
+    @property
+    def pretrain_dataset(self) -> str:
+        return self.base_model.pretrain_dataset
+
+    @property
+    def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
+        remote_files = G.get_remote_files(subfolder="PerturbedModel")
+        found = any(f.startswith(remote_path) for f in remote_files)
+        log.info(f"[PerturbedModel] {'✓ EXISTS' if found else '❌ NOT found'}: {self.run_name}")
+        return found
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {
+            "gres": "gpu:1",
+            "nodes": 1,
+            "cpus": 8,
+            "mem": "64GB",
+            "requeue": True,
+            "partition": "flame",
+            "qos": "flame-16gpu_qos",
+            "account": "aditirag",
+            "time": "2-00:00:00",
+        }
+
+    def construct(self, builder: Task):
+        gs_root = cast(str, Project.config.GS_PATH)
+        if isinstance(self.base_model, PretrainedModel):
+            base_subfolder = "PretrainedModel"
+        elif isinstance(self.base_model, AnnealedModel):
+            base_subfolder = "AnnealedModel"
+        else:
+            raise TypeError(f"Unsupported base model type: {type(self.base_model)}")
+
+        gcs_dir = os.path.join(gs_root, base_subfolder)
+        output_gcs_dir = os.path.join(gs_root, "PerturbedModel")
+
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        perturb_script = os.path.join(olmo_path, "new_utils", "perturb_weights.py")
+        cmd_parts = [
+            "cd", olmo_path, "&&",
+            "python", perturb_script,
+            f"--gcs_dir {gcs_dir}",
+            f"--model_name {self.base_model.run_name}",
+            f"--output_gcs_dir {output_gcs_dir}",
+            f"--sigma {self.sigma}",
+            f"--seed {self.seed}",
+            f"--device {self.device}",
+        ]
+        builder.run_command(" ".join(cmd_parts))
+
+
+@dataclass(frozen=True)
 class ModelEvaluation(Artifact):
-    model: "PretrainedModel | CPTModel | AnnealedModel"
+    model: "PretrainedModel | CPTModel | AnnealedModel | PerturbedModel"
     device: str = 'cuda'
     chunk_size: int = 1024
     hf_model: bool = False
@@ -738,7 +813,6 @@ class ModelEvaluation(Artifact):
         
         builder.run_command(' '.join(cmd))
         builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluation'), delete=False, checksum=False, contents=True)
-
 
 @dataclass(frozen=True)
 class HFModel(Artifact):
