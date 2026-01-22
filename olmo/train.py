@@ -44,7 +44,7 @@ from .data import IterableDataset
 from .eval import Evaluator
 from .exceptions import OLMoConfigurationError
 from .model import OLMo
-from .optim import Optimizer, Scheduler, SAM, Muon
+from .optim import Optimizer, Scheduler, SAM, Muon, MuonKimi
 from .torch_util import (
     SingleAccelerator,
     barrier,
@@ -420,7 +420,7 @@ class Trainer:
             self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
         )
 
-        if(isinstance(self.optim, Muon)):
+        if(isinstance(self.optim, (Muon, MuonKimi))):
             new_muon_learning_rate = new_learning_rate = self.scheduler.get_lr(
             self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
         )
@@ -892,8 +892,7 @@ class Trainer:
 
         if isinstance(self.optim, SAM):
             self.optim.first_step(zero_grad=True)
-            # Second forward-backward pass for SAM - we don't log this loss
-            ce_batch_loss_sam, z_batch_loss_sam = self.train_batch(batch)
+            ce_batch_loss, z_batch_loss = self.train_batch(batch)
             self.optim.restore_original_params()
 
         # Collect loss, potentially reducing over all ranks.
@@ -919,7 +918,7 @@ class Trainer:
             # TODO (epwalsh): if we want to enable different LRs or gradient clipping settings per group
             # we should pass `group["initial_lr"]` or `group["initial_max_grad_norm"]` here instead of
             # the corresponding values from `self.cfg`.
-            if (isinstance(self.optim, Muon)):
+            if (isinstance(self.optim, (Muon, MuonKimi))):
                 group["lr"] = self.scheduler.get_lr(
                 self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
             )

@@ -1034,6 +1034,215 @@ class Muon(Optimizer):
             return metrics
 
 
+class MuonKimi(Optimizer):
+    """
+    MuonKimi - Based on Moonlight/Kimi's Muon implementation
+    Adapted from https://github.com/MoonshotAI/Moonlight/blob/master/examples/toy_train.py
+    
+    Key differences from original Muon:
+    - Per-parameter learning rate adjustment based on matrix dimensions
+    - Simpler Newton-Schulz normalization
+    - No gradient normalization
+    """
+
+    def __init__(
+        self,
+        base_optimizer,
+        params,
+        lr=0.02,
+        weight_decay=0,
+        momentum=0.95,
+        nesterov=True,
+        ns_steps=5,
+        record_update_metrics: bool = False,
+        selective_updates: bool = False,
+    ):
+
+        for group in params:
+            group["params"] = sorted(group["params"], key=lambda x: x.size(), reverse=True)
+            group["lr"] = lr
+            group["weight_decay"] = weight_decay
+            group["momentum"] = momentum
+            group["nesterov"] = nesterov
+            group["ns_steps"] = ns_steps
+
+        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+        super().__init__(params, defaults)
+
+        self.base_optimizer = base_optimizer
+        self._record_update_metrics = record_update_metrics
+        self._collecting_metrics = False
+        self._selective_updates = selective_updates
+
+        self._step_size_param_names = None
+        self._step_size_norms = None
+        self._step_size_maxs = None
+
+    def _zeropower_via_newtonschulz5_kimi(self, G, steps: int):
+        """
+        Newton-Schulz iteration from Moonlight/Kimi implementation.
+        Simpler version that uses overall norm instead of per-dimension norms.
+        """
+        assert len(G.shape) == 2
+        a, b, c = (3.4445, -4.7750, 2.0315)
+        X = G.bfloat16()
+        if G.size(0) > G.size(1):
+            X = X.T
+        
+        # Ensure spectral norm is at most 1 (using simple .norm())
+        X = X / (X.norm() + 1e-7)
+        
+        # Perform the NS iterations
+        for _ in range(steps):
+            A = X @ X.T
+            B = b * A + c * A @ A
+            X = a * X + B @ X
+
+        if G.size(0) > G.size(1):
+            X = X.T
+        
+        return X
+
+    def _adjust_lr_for_muon(self, lr: float, param_shape) -> float:
+        """
+        Adjust learning rate based on matrix dimensions as in Moonlight implementation.
+        adjusted_lr = lr * 0.2 * sqrt(max(rows, cols))
+        """
+        A, B = param_shape[:2]
+        adjusted_ratio = 0.2 * (max(A, B) ** 0.5)
+        adjusted_lr = lr * adjusted_ratio
+        return adjusted_lr
+
+    def _muon_update_kimi(self, grad, momentum, beta=0.95, ns_steps=5, nesterov=True):
+        """
+        Muon update following Moonlight/Kimi implementation.
+        No gradient normalization, simpler flow.
+        """
+        # Apply momentum
+        momentum.mul_(beta).add_(grad)
+        
+        # Choose update direction (Nesterov or regular momentum)
+        if nesterov:
+            update = grad.add(momentum, alpha=beta)
+        else:
+            update = momentum
+        
+        # Handle conv filters
+        if update.ndim > 2:
+            update = update.view(update.size(0), -1)
+        
+        # Orthogonalize
+        update = self._zeropower_via_newtonschulz5_kimi(update, steps=ns_steps)
+        
+        return update
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        """
+        Perform optimization step following Moonlight/Kimi implementation.
+        """
+        if closure is not None:
+            with torch.enable_grad():
+                closure()
+
+        param_names = []
+        step_size_norms = []
+        step_size_maxs = []
+
+        for group in self.param_groups:
+            
+            lr = group["lr"]
+            momentum = group["momentum"]
+            weight_decay = group["weight_decay"]
+            nesterov = group["nesterov"]
+            ns_steps = group["ns_steps"]
+            params = group["params"]
+            
+            params_pad = params + [torch.empty_like(params[-1])] * (
+                dist.get_world_size() - len(params) % dist.get_world_size()
+            )
+
+            for base_i in range(len(params))[:: dist.get_world_size()]:
+                if base_i + dist.get_rank() < len(params):
+                    name = group.get("param_names", [None] * len(params))[base_i + dist.get_rank()]
+                    param_names.append(name if name is not None else f"param_{base_i + dist.get_rank()}")
+
+                    p = params[base_i + dist.get_rank()]
+                    if p.grad is None:
+                        p.grad = torch.zeros_like(p)
+                    
+                    state = self.state[p]
+                    if "momentum_buffer" not in state:
+                        state["momentum_buffer"] = torch.zeros_like(p)
+                    
+                    # Compute orthogonalized update
+                    update = self._muon_update_kimi(
+                        p.grad, 
+                        state["momentum_buffer"], 
+                        beta=momentum, 
+                        ns_steps=ns_steps,
+                        nesterov=nesterov
+                    )
+                    
+                    # Adjust learning rate based on parameter dimensions
+                    adjusted_lr = self._adjust_lr_for_muon(lr, p.shape)
+                    
+                    # Apply weight decay BEFORE update (Kimi style)
+                    p.data.mul_(1 - lr * weight_decay)
+                    
+                    # Apply update with adjusted learning rate
+                    p.data.add_(update.reshape(p.shape), alpha=-adjusted_lr)
+
+                    step_size_norms.append(torch.linalg.vector_norm(update, 2.0, dtype=torch.float32).unsqueeze(0))
+                    step_size_maxs.append(update.abs().max().unsqueeze(0))
+                
+                dist.all_gather(
+                    params_pad[base_i : base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()]
+                )
+        
+        self.base_optimizer.step(closure=closure)
+
+        self._step_size_param_names = param_names
+        self._step_size_norms = step_size_norms
+        self._step_size_maxs = step_size_maxs
+
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        if not (self._record_update_metrics and self._collecting_metrics):
+            return {}
+        else:
+            device = get_default_device()
+            dst_rank = 0
+            if process_group is not None:
+                dst_rank = dist.get_global_rank(process_group, 0)
+            param_names = self._step_size_param_names
+            step_size_norms = self._step_size_norms
+            step_size_maxs = self._step_size_maxs
+            assert param_names is not None
+            assert step_size_norms is not None
+            assert step_size_maxs is not None
+
+            if is_distributed() and isinstance(module, FullyShardedDataParallel):
+                all_norms = torch.cat(step_size_norms).to(device) ** 2.0
+                dist.reduce(all_norms, dst_rank, op=dist.ReduceOp.SUM, group=process_group)
+                step_size_norms = (all_norms ** (0.5)).squeeze(0).split(1)
+
+                all_maxs = torch.cat(step_size_maxs).to(device)
+                dist.reduce(all_maxs, dst_rank, op=dist.ReduceOp.MAX, group=process_group)
+                step_size_maxs = all_maxs.split(1)
+
+            metrics = {}
+            for param_name, step_size_norm, step_size_max in zip(param_names, step_size_norms, step_size_maxs):
+                metrics[f"step/{param_name}.norm"] = step_size_norm.squeeze(0)
+                metrics[f"step/{param_name}.max"] = step_size_max.squeeze(0)
+
+            self._step_size_param_names = None
+            self._step_size_norms = None
+            self._step_size_maxs = None
+            return metrics
+
+
 @dataclass
 class Scheduler(metaclass=ABCMeta):
     # NOTE: these fields are not given default values because otherwise dataclasses complains
@@ -1312,6 +1521,11 @@ def get_param_groups_muon(cfg: TrainConfig, model: nn.Module) -> List[Dict[str, 
     no_decay_muon = set()
     no_decay = set()
     all_params = {}
+
+    def _should_print() -> bool:
+        # Only print from rank 0 (or when not running distributed).
+        return (not dist.is_initialized()) or dist.get_rank() == 0
+
     for mn, m in model.named_modules():
         for pn, p in m.named_parameters():
             # NOTE: because named_modules and named_parameters are recursive
@@ -1323,7 +1537,14 @@ def get_param_groups_muon(cfg: TrainConfig, model: nn.Module) -> List[Dict[str, 
             fpn = f"{mn}.{pn}" if mn else pn
             all_params[fpn] = p
 
-            if pn.endswith("bias"):
+            if _should_print():
+                print(fpn)
+
+            if fpn == 'module.transformer.ff_out.weight':
+                decay.add(fpn)
+                if _should_print():
+                    print(f'{fpn} added to non muon decay')
+            elif pn.endswith("bias"):
                 if cfg.optimizer.decay_norm_and_bias:
                     decay.add(fpn)
                 else:
@@ -1501,6 +1722,25 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
     elif cfg.optimizer.name == OptimizerType.muon:
         param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
         return Muon(
+            base_optimizer=AdamW(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                betas=cfg.optimizer.betas,
+                weight_decay=cfg.optimizer.weight_decay,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+                eps=cfg.optimizer.eps,
+            ),
+            params=muon_param_groups,
+            lr=cfg.optimizer.muon_learning_rate,
+            weight_decay=cfg.optimizer.muon_weight_decay,
+            momentum=cfg.optimizer.muon_momentum,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
+        )
+    elif cfg.optimizer.name == OptimizerType.muon_kimi:
+        param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
+        return MuonKimi(
             base_optimizer=AdamW(
                 param_groups,
                 lr=cfg.optimizer.learning_rate,
