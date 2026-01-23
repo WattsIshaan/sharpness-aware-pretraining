@@ -401,18 +401,18 @@ class AnnealedModel(Artifact):
     with the WSD (Warmup-Stable-Decay) scheduler.
     """
     pretrained_model: PretrainedModel
-    pretrain_ckpt_step: int  # Step number of the checkpoint to load
     anneal_gpus: int = 8
     anneal_steps: int = None
     anneal_match: str = "token" # "token" or "compute"
     anneal_optim: str = 'adamw'
+    anneal_percent: int = None
 
     @property
     def relpath(self) -> str:
         return f'AnnealedModel/{self.run_name}'
 
     @property
-    def anneal_pretrain_ckpt_step(self) -> int:
+    def pretrain_ckpt_step(self) -> int:
         return ANNEAL_CKPT[self.anneal_match][int(self.model_size[:-1])][self.pretrained_model.train_tokens]
 
     @property
