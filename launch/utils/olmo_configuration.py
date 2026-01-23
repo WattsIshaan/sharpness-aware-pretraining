@@ -146,7 +146,7 @@ def get_train_config(
     run_name,
     save_folder,
     train_data_paths,
-    eval_datasets,
+    eval_datasets=None,
     model_size = '20m',
     train_data_label_mask_paths=None,
     optimizer='adamw',

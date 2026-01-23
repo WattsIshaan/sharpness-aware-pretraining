@@ -2,7 +2,7 @@
 
 # 1) Load project configuration as early as possible
 from experiments import Project
-Project.init('60m-experiments2')
+Project.init('60m-experiments')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
@@ -19,7 +19,7 @@ pretrained_models = ArtifactSet.from_product(
         params={
             'optimizer': ['sam'],
             'pt_lr': [-1],
-            'train_tokens': [192],#12, 24, 
+            'train_tokens': [12, 24, 48, 96, 192], #, 
             # 'train_tokens': [4, 8, 16, 32, 64],
             # 'train_tokens': [15, 30, 60, 120],
             # 'train_tokens': [120],
@@ -27,7 +27,6 @@ pretrained_models = ArtifactSet.from_product(
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'sam_rho': [5e-2],
-            'scheduler_t_warmup': [2000],
             'scheduler_alpha_f': [0.1],
             'sam_base_optimizer': ['adamw'],
             'model_size': ['60m']
@@ -65,7 +64,7 @@ cpt_model_evaluations = build_cpt_model_evaluations(cpt_models)
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting'
+    'conda activate forgetting2'
 ])
 
 # Create executor

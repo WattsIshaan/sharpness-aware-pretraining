@@ -99,6 +99,24 @@ LIST_OF_CPT_FILES = {
             "mask_paths": ["musicpile/train/label_mask.npy"],
             "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}}
         },
+        "alpaca": {
+            "data_paths": ["tatsu-lab_alpaca/train/input_ids.npy"],
+            "mask_paths": ["tatsu-lab_alpaca/train/label_mask.npy"],
+            "val": {"alpaca-validation": {"data": ['tatsu-lab_alpaca/val/input_ids-alpaca.npy'], "masks": ['tatsu-lab_alpaca/val/label_mask.npy']}},
+            "train_tokens": 3.6,
+        },
+        "gsm8k": {
+            "data_paths": ["openai_gsm8k/train/input_ids.npy"],
+            "mask_paths": ["openai_gsm8k/train/label_mask.npy"],
+            "val": {"gsm8k-validation": {"data": ['openai_gsm8k/val/input_ids-gsm8k.npy'], "masks": ['openai_gsm8k/val/label_mask.npy']}},
+            "train_tokens": 1.2,
+        },
+        "siqa": {
+            "data_paths": ["allenai_social_i_qa/train/input_ids.npy"],
+            "mask_paths": ["allenai_social_i_qa/train/label_mask.npy"],
+            "val": {"siqa-validation": {"data": ['allenai_social_i_qa/val/input_ids-siqa.npy'], "masks": ['allenai_social_i_qa/val/label_mask.npy']}},
+            "train_tokens": 1.18,
+        },
 
     }
 }
@@ -124,6 +142,59 @@ PT_LR = {
         60: 6e-4,
         120: 3e-4,
     },
+}
+
+WARMUP_STEPS = {
+    20: 1000,
+    60: 2000,
+    150: 3000,
+}
+
+ANNEAL_CKPT = {
+    "compute": {
+        20: {
+            4: 15000,
+            8: 25000,
+            16: 50000,
+            32: 100000,
+            64: 205000,
+        },
+        60:{
+            12: 35000,
+            24: 75000,
+            48: 155000,
+            96: 305000,
+            192: 610000,
+        },
+        150 : {
+            15: 45000,
+            30: 95000,
+            60: 190000,
+            120: 380000,
+        }
+    },
+    "token": {
+        20: {
+            4: 15000,
+            8: 30000,
+            16: 55000,
+            32: 110000,
+            64: 220000,
+        },
+        60:{
+            12: 40000,
+            24: 85000,
+            48: 165000,
+            96: 335000,
+            192: 670000,
+        },
+        150 : {
+            15: 50000,
+            30: 105000,
+            60: 205000,
+            120: 415000,
+        }
+    }
 }
 
 # Merge pretrain validation sets into CPT dictionaries
@@ -157,7 +228,7 @@ class PretrainedModel(Artifact):
     sam_base_optimizer: str = 'adamw'
     batch_size: int = 256
     scheduler_name: str = 'cosine_with_warmup'
-    scheduler_t_warmup: int = 5000
+    # scheduler_t_warmup: int = 5000
     scheduler_alpha_f: float = 0.1
     pretrain_gpus: int = 8
     muon_learning_rate: float = 5e-1
@@ -171,6 +242,9 @@ class PretrainedModel(Artifact):
             return PT_LR[int(self.model_size[:-1])][self.train_tokens]
         return self.pt_lr
 
+    @property
+    def scheduler_t_warmup(self) -> int:
+        return WARMUP_STEPS[int(self.model_size[:-1])]
 
     @property
     def relpath(self) -> str:
@@ -330,11 +404,16 @@ class AnnealedModel(Artifact):
     pretrain_ckpt_step: int  # Step number of the checkpoint to load
     anneal_gpus: int = 8
     anneal_steps: int = None
-    anneal_percent: int = None
+    anneal_match: str = "token" # "token" or "compute"
+    anneal_optim: str = 'adamw'
 
     @property
     def relpath(self) -> str:
         return f'AnnealedModel/{self.run_name}'
+
+    @property
+    def anneal_pretrain_ckpt_step(self) -> int:
+        return ANNEAL_CKPT[self.anneal_match][int(self.model_size[:-1])][self.pretrained_model.train_tokens]
 
     @property
     def checkpoint_relpath(self) -> str:
@@ -343,9 +422,11 @@ class AnnealedModel(Artifact):
     @property
     def run_name(self) -> str:
         if self.anneal_steps is not None:
-            return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}-steps{self.anneal_steps}'
+            return f'{self.pretrained_model.run_name}-anneal-{self.anneal_optim}-ckpt{self.pretrain_ckpt_step}-steps{self.anneal_steps}'
         if self.anneal_percent is not None:
-            return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}-percent{self.anneal_percent}'
+            if self.model_size == "60m" and self.anneal_optim == "adamw":
+                return f'{self.pretrained_model.run_name}-anneal-ckpt{self.pretrain_ckpt_step}-percent{self.anneal_percent}'
+            return f'{self.pretrained_model.run_name}-anneal-{self.anneal_optim}-ckpt{self.pretrain_ckpt_step}-percent{self.anneal_percent}'
     
     @property
     def pretrain_dataset(self) -> str:
@@ -366,15 +447,14 @@ class AnnealedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gres": f"gpu:{self.pretrain_gpus}",
+            "gpus": self.anneal_gpus,
             "nodes": 1,
-            "cpus": max(1, self.pretrain_gpus * 2),
+            "cpus": max(1, self.anneal_gpus * 2),
             "mem": '64GB',
             "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu-c_qos',
-            "account": 'aditirag',
-            "time": "12-00:00:00"
+            # "partition": 'preempt',
+            "partition": 'general',
+            "time": "2-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -437,7 +517,7 @@ class AnnealedModel(Artifact):
             train_data_paths=train_data_paths,
             eval_datasets=eval_datasets,
             model_size=self.model_size,
-            optimizer=self.pretrained_model.optimizer,
+            optimizer=self.anneal_optim,
             learning_rate=self.pretrained_model.learning_rate,
             weight_decay=self.pretrained_model.weight_decay,
             muon_learning_rate=self.pretrained_model.muon_learning_rate,
@@ -545,10 +625,11 @@ class CPTModel(Artifact):
 
     @property
     def exists(self) -> bool:
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
-        remote_files = G.get_remote_files(subfolder='CPTModel')
+        remote_files = G.get_remote_files(subfolder=f'CPTModel/{self.cpt_dataset}')
         found = any(f.startswith(remote_path) for f in remote_files)
         log.info(f"[CPTModel] {'✓ EXISTS' if found else '❌ NOT found'}: {self.cpt_dataset}")
         return found
@@ -578,7 +659,8 @@ class CPTModel(Artifact):
         dataset_info = LIST_OF_CPT_FILES[self.pretrain_dataset][self.cpt_dataset]
         train_paths = [os.path.join(local_root, p) for p in dataset_info["data_paths"]]
         mask_paths = [os.path.join(local_root, p) for p in dataset_info["mask_paths"]]
-        
+        tmp_train_tokens = dataset_info.get("train_tokens", None)
+
         eval_datasets = {}
         eval_datasets["pretrain"] = {}
         eval_datasets["cpt"] = {}
@@ -595,7 +677,12 @@ class CPTModel(Artifact):
 
 
         # 3. Step & Scheduler Math
-        total_tokens = self.train_tokens * MILLION
+        train_tokens = self.train_tokens
+        if tmp_train_tokens is not None:
+            log.info(f"Using train tokens from dataset info: {train_tokens}M")
+            train_tokens = tmp_train_tokens
+
+        total_tokens = train_tokens * MILLION
         total_steps = max(1, total_tokens // (self.batch_size * 1024))
         warmup_steps = max(1, int(total_steps * 0.1))
 
@@ -609,7 +696,7 @@ class CPTModel(Artifact):
             save_folder=save_folder,
             train_data_paths=train_paths,
             train_data_label_mask_paths=mask_paths,
-            eval_datasets=eval_datasets,
+            # eval_datasets=eval_datasets,
             model_size=self.pretrained_model.model_size,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
@@ -617,7 +704,7 @@ class CPTModel(Artifact):
             muon_learning_rate=self.muon_learning_rate,
             muon_momentum=self.muon_momentum,
             muon_weight_decay=self.muon_weight_decay,
-            max_duration=f'{self.train_tokens}e6T',
+            max_duration=f'{train_tokens}e6T',
             seed=6198,
             model_overrides=overrides,
             scheduler_name=self.scheduler_name,
@@ -625,7 +712,7 @@ class CPTModel(Artifact):
             scheduler_t_warmup=warmup_steps,
             global_train_batch_size=self.batch_size,
             device_train_microbatch_size=4,
-            eval_interval=1000,
+            eval_interval=10000,
             save_interval_unsharded=1000,
             wandb_project=cast(str, Project.config.PROJECT_NAME),
             wandb_entity=cast(str, Project.config.WANDB_ENTITY),
@@ -684,6 +771,7 @@ class PerturbedModel(Artifact):
 
     @property
     def exists(self) -> bool:
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
@@ -694,14 +782,12 @@ class PerturbedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gres": "gpu:1",
+            "gpus": 1,
             "nodes": 1,
-            "cpus": 8,
+            "cpus-per-task": 4,
             "mem": "64GB",
             "requeue": True,
-            "partition": "flame",
-            "qos": "flame-16gpu_qos",
-            "account": "aditirag",
+            "partition": "preempt",
             "time": "2-00:00:00",
         }
 
@@ -819,7 +905,7 @@ class HFModel(Artifact):
     """
     Convert a `PretrainedModel` checkpoint to a HuggingFace-compatible format and upload to GS.
     """
-    pretrained_model: PretrainedModel
+    pretrained_model: PretrainedModel | AnnealedModel
 
     @property
     def run_name(self) -> str:

@@ -1,5 +1,5 @@
 SIZE = [20, 60, 150]
-CPT_DATASET = ["starcoder", "musicpile", "tulu"]
+CPT_DATASET = ["starcoder", "musicpile", "tulu", "alpaca", "gsm8k", "siqa"]
 OPTIM = ['adamw', 'sam']
 RHO = [5e-2]
 VERBOSE = False
