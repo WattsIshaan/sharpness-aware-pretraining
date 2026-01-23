@@ -12,7 +12,8 @@ def build_annealed_models(pretrained_models: ArtifactSet) -> ArtifactSet:
                 anneal_gpus=8,
                 anneal_optim=["adamw", "sam"],
                 anneal_match="token",
-                anneal_percent=[10]
+                anneal_percent=[10],
+                pt_token=[48, 96]
             )
         )
     )

@@ -117,6 +117,22 @@ LIST_OF_CPT_FILES = {
             "val": {"siqa-validation": {"data": ['allenai_social_i_qa/val/input_ids-siqa.npy'], "masks": ['allenai_social_i_qa/val/label_mask.npy']}},
             "train_tokens": 1.18,
         },
+        "open-platypus": {
+            "data_paths": ["garage-bAInd_Open-Platypus/train/input_ids.npy"],
+            "mask_paths": ["garage-bAInd_Open-Platypus/train/label_mask.npy"],
+            "val": {"open-platypus-validation": {"data": ['garage-bAInd_Open-Platypus/val/input_ids-open-platypus.npy'], "masks": ['garage-bAInd_Open-Platypus/val/label_mask.npy']}},
+            "train_tokens": 7,
+        },
+        "stackmathqa": {
+            "data_paths": ["math-ai_StackMathQA/train/input_ids.npy"],
+            "mask_paths": ["math-ai_StackMathQA/train/label_mask.npy"],
+            "val": {"stackmathqa-validation": {"data": ['math-ai_StackMathQA/val/input_ids-stackmathqa.npy'], "masks": ['math-ai_StackMathQA/val/label_mask.npy']}},
+        },
+        "helpsteer": {
+            "data_paths": ["nvidia_HelpSteer/train/input_ids.npy"],
+            "mask_paths": ["nvidia_HelpSteer/train/label_mask.npy"],
+            "val": {"helpsteer-validation": {"data": ['nvidia_HelpSteer/val/input_ids-helpsteer.npy'], "masks": ['nvidia_HelpSteer/val/label_mask.npy']}},
+        },
 
     }
 }
@@ -401,6 +417,7 @@ class AnnealedModel(Artifact):
     with the WSD (Warmup-Stable-Decay) scheduler.
     """
     pretrained_model: PretrainedModel
+    pt_token: int
     anneal_gpus: int = 8
     anneal_steps: int = None
     anneal_match: str = "token" # "token" or "compute"
@@ -413,7 +430,7 @@ class AnnealedModel(Artifact):
 
     @property
     def pretrain_ckpt_step(self) -> int:
-        return ANNEAL_CKPT[self.anneal_match][int(self.model_size[:-1])][self.pretrained_model.train_tokens]
+        return ANNEAL_CKPT[self.anneal_match][int(self.model_size[:-1])][self.pt_token]
 
     @property
     def checkpoint_relpath(self) -> str:
