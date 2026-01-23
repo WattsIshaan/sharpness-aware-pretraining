@@ -80,6 +80,8 @@ def get_run_info(
                 assert len(run_pt) == 1, print(run_pt)
                 run_pt = run_pt[0]
                 run_pert = [r for r in run_perturbed if r.get("token") == t]
+                if len(run_pert) == 0:
+                    continue
                 assert len(run_pert) == 1, print(run_pert)
                 run_pert = run_pert[0]
 

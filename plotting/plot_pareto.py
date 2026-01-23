@@ -13,16 +13,34 @@ YLIM = {
         "starcoder": (0, 2.5),
         "musicpile" : (0, 1.55),
         "tulu": (0, 3),
+        "gsm8k": (0, 10),
+        "alpaca": (0, 10),
+        "siqa": (0, 10),
+        "open-platypus": (0, 10),
+        "stackmathqa": (0, 10),
+        "helpsteer": (0, 10),
     },
     60: {
         "starcoder": (0, 2.8),
         "musicpile" : (0, 1.7),
         "tulu": (0, 3),
+        "gsm8k": (0, 1.6),
+        "alpaca": (0, 10),
+        "siqa": (0, 1.6),
+        "open-platypus": (0, 10),
+        "stackmathqa": (0, 10),
+        "helpsteer": (0, 10),
     },
     20: {
         "starcoder": (0, 3.5),
         "musicpile" : (0, 2.25),
         "tulu": (0, 3.5),
+        "gsm8k": (0, 10),
+        "alpaca": (0, 10),
+        "siqa": (0, 10),
+        "open-platypus": (0, 10),
+        "stackmathqa": (0, 10),
+        "helpsteer": (0, 10),
     }
 }
 XLIM = {
@@ -30,16 +48,34 @@ XLIM = {
         "starcoder": (0, 6),
         "musicpile" : (0, 5),
         "tulu": (0, 3.5),
+        "gsm8k": (0, 5),
+        "alpaca": (0, 10),
+        "siqa": (0, 5),
+        "open-platypus": (0, 10),
+        "stackmathqa": (0, 10),
+        "helpsteer": (0, 10),
     },
     60: {
         "starcoder": (0, 5.2),
         "musicpile" : (0, 5),
         "tulu": (0, 3.8),
+        "gsm8k": (0, 5),
+        "alpaca": (0, 10),
+        "siqa": (0, 5),
+        "open-platypus": (0, 4),
+        "stackmathqa": (0, 6),
+        "helpsteer": (0, 4),
     },
     20: {
         "starcoder": (0, 6.5),
         "musicpile" : (0, 6.5),
         "tulu": (0, 4.2),
+        "gsm8k": (0, 5),
+        "alpaca": (0, 10),
+        "siqa": (0, 5),
+        "open-platypus": (0, 10),
+        "stackmathqa": (0, 10),
+        "helpsteer": (0, 10),
     }
 }
 
@@ -48,6 +84,8 @@ def make_tradeoff_pareto_token_matched(results):
     for size in SIZE:
         tokens_list = TOKEN_LIST[size]
         for cpt_dataset in CPT_DATASET:
+
+            print(f"Plotting {cpt_dataset.capitalize()} for OLMo {size}M")
             fig, axs = plt.subplots(1, len(tokens_list), figsize=(len(tokens_list) * FIG_WIDTH, 4), sharey=True, sharex=True)
             # Ensure axs is iterable
             if len(tokens_list) == 1:
@@ -68,20 +106,20 @@ def make_tradeoff_pareto_token_matched(results):
                     cpt_val = []
                     used_cpt_lrs = []
 
-                    # tmp = {
-                    #     "bs32": {
-                    #         "x": [],
-                    #         "y": []
-                    #     },
-                    #     "bs128": {
-                    #         "x": [],
-                    #         "y": []
-                    #     },
-                    #     "wd0": {
-                    #         "x": [],
-                    #         "y": []
-                    #     },
-                    # }
+                    tmp = {
+                        "bs32": {
+                            "x": [],
+                            "y": []
+                        },
+                        "bs128": {
+                            "x": [],
+                            "y": []
+                        },
+                        "wd0": {
+                            "x": [],
+                            "y": []
+                        },
+                    }
                     for cpt_lr in cpt_lrs:
                         cpt_wds = sorted(run_info["cpt"][cpt_lr].keys())
                         for cpt_wd in cpt_wds:
@@ -92,12 +130,12 @@ def make_tradeoff_pareto_token_matched(results):
                                     y_val = run_info["cpt"][cpt_lr][cpt_wd][cpt_bs][t][cpt_dataset]
 
                                     if x_val >= XLIM[size][cpt_dataset][0] and x_val <= XLIM[size][cpt_dataset][1] and y_val >= YLIM[size][cpt_dataset][0] and y_val <= YLIM[size][cpt_dataset][1]:
-                                        # if cpt_wd == 0 and cpt_bs == 64:
-                                        #     tmp["wd0"]["x"].append(x_val)
-                                        #     tmp["wd0"]["y"].append(y_val)
-                                        # if cpt_bs == 32:
-                                        #     tmp["bs32"]["x"].append(x_val)
-                                        #     tmp["bs32"]["y"].append(y_val)
+                                        if cpt_wd == 1e-1:
+                                            tmp["wd0"]["x"].append(x_val)
+                                            tmp["wd0"]["y"].append(y_val)
+                                        elif cpt_wd == 0:
+                                            tmp["bs32"]["x"].append(x_val)
+                                            tmp["bs32"]["y"].append(y_val)
                                         # if cpt_bs == 128:
                                         #     tmp["bs128"]["x"].append(x_val)
                                         #     tmp["bs128"]["y"].append(y_val)
@@ -112,30 +150,36 @@ def make_tradeoff_pareto_token_matched(results):
 
                     ax.scatter(dclm_val, cpt_val, label = OPTIM_MAP[optim], marker="o", color=COLOR_MAP[optim])
                     # ax.scatter(tmp["wd0"]["x"], tmp["wd0"]["y"], label = OPTIM_MAP[optim] + " wd0" , marker="*")
-                    # ax.scatter(tmp["bs32"]["x"], tmp["bs32"]["y"], label = OPTIM_MAP[optim] + " bs32", marker="v")
+                    # ax.scatter(tmp["bs32"]["x"], tmp["bs32"]["y"], label = OPTIM_MAP[optim] + " wd1e-1", marker="v")
                     # ax.scatter(tmp["bs128"]["x"], tmp["bs128"]["y"], label = OPTIM_MAP[optim] + " bs128", marker="p")
+                    if optim == "adamw":
+                        for x, y, lr in zip(dclm_val, cpt_val, used_cpt_lrs):
+                            ax.text(x, y, f"{lr}", fontsize=8, ha='right', va='bottom', color='black')
 
-                    points = np.empty((len(dclm_val), 2))
-                    points[:, 0] = dclm_val
-                    points[:, 1] = cpt_val
-                    hull = ConvexHull(points)
-                    # print(hull)
-                    h = np.append(hull.vertices, hull.vertices[0])
-                    # print(hull.vertices, hull.vertices[0])
-                    # h = hull.vertices
-                    new_points = np.empty((len(h), 2))
-                    new_points[:, 0] = points[h, 0]
-                    new_points[:, 1] = points[h, 1]
-                    # Rotate so that first row has the smallest first column value
-                    min_idx = np.argmin(new_points[:, 0])
-                    new_points = np.roll(new_points, -min_idx, axis=0)
+                    # assert len(dclm_val) > 0, f"No points found for {cpt_dataset.capitalize()} for OLMo {size}M with {OPTIM_MAP[optim]}"
 
-                    for i, num in enumerate(range(len(new_points)-1)):
-                        if new_points[i][0] > new_points[i+1][0]:
-                            new_points = new_points[:i+1, :]
-                            break
-                            
-                    ax.plot(new_points[:,0], new_points[:,1], color=COLOR_MAP[optim])
+                    if len(dclm_val) > 2:
+                        points = np.empty((len(dclm_val), 2))
+                        points[:, 0] = dclm_val
+                        points[:, 1] = cpt_val
+                        hull = ConvexHull(points)
+                        # print(hull)
+                        h = np.append(hull.vertices, hull.vertices[0])
+                        # print(hull.vertices, hull.vertices[0])
+                        # h = hull.vertices
+                        new_points = np.empty((len(h), 2))
+                        new_points[:, 0] = points[h, 0]
+                        new_points[:, 1] = points[h, 1]
+                        # Rotate so that first row has the smallest first column value
+                        min_idx = np.argmin(new_points[:, 0])
+                        new_points = np.roll(new_points, -min_idx, axis=0)
+
+                        for i, num in enumerate(range(len(new_points)-1)):
+                            if new_points[i][0] > new_points[i+1][0]:
+                                new_points = new_points[:i+1, :]
+                                break
+                                
+                        ax.plot(new_points[:,0], new_points[:,1], color=COLOR_MAP[optim])
 
                 ax.set_xlabel("DCLM Val Loss", fontsize=FONTSIZE["AXIS"])
                 if col == 0:
@@ -149,7 +193,7 @@ def make_tradeoff_pareto_token_matched(results):
 
             for col, t in enumerate(tokens_list):
                 ax = axs[col]
-                cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD)
+                cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD[size][cpt_dataset])
                 ax.axhline(cpt_threshold, linestyle='--', color='black', label="FT Threshold")
 
             fig.suptitle(f"OLMo-{size}M | {cpt_dataset.capitalize()} | FT Loss v/s PT Loss (Token Matched)", fontsize=FONTSIZE["SUP_TITLE"])
@@ -366,9 +410,9 @@ def main():
     with open(os.path.join(RESULTS_DIR, "final_results.json"), "r") as file:
         results = json.load(file)
 
-    # make_tradeoff_pareto_token_matched(results)
+    make_tradeoff_pareto_token_matched(results)
     # make_tradeoff_pareto_compute_matched(results)
-    make_tradeoff_pareto_lrs(results)
+    # make_tradeoff_pareto_lrs(results)
 
 
 

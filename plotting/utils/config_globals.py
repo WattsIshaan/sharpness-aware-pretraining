@@ -1,10 +1,35 @@
-SIZE = [20, 60, 150]
-CPT_DATASET = ["starcoder", "musicpile", "tulu", "alpaca", "gsm8k", "siqa"]
+SIZE = [60]
+CPT_DATASET = ["starcoder", "musicpile", "tulu", "gsm8k", "siqa", 'stackmathqa'] #"alpaca", 'open-platypus', , 'helpsteer'
 OPTIM = ['adamw', 'sam']
 RHO = [5e-2]
 VERBOSE = False
 
-TRADEOFF_THRESHOLD=0.03
+TRADEOFF_THRESHOLD = {
+    20: {
+        "starcoder": 0.025,
+        "musicpile": 0.025,
+        "tulu": 0.05,
+        "stackmathqa": 0.03,
+        "gsm8k": 0.07,
+        "siqa": 0.03,
+    },
+    60: {
+        "starcoder": 0.025,
+        "musicpile": 0.025,
+        "tulu": 0.05,
+        "stackmathqa": 0.03,
+        "gsm8k": 0.07,
+        "siqa": 0.03,
+    },
+    150: {
+        "starcoder": 0.025,
+        "musicpile": 0.025,
+        "tulu": 0.05,
+        "stackmathqa": 0.03,
+        "gsm8k": 0.07,
+        "siqa": 0.03,
+    },
+}
 
 RESULTS_DIR = "/home/iwatts/catastrophic-forgetting/results/"
 
@@ -28,6 +53,12 @@ TASKNAME_MAP = {
     "dclm_train": "dclm-train-20m",
     "musicpile_val": "input_ids-musicpile",
     "tulu_val": "input_ids-tulu",
+    "gsm8k_val": "input_ids-gsm8k",
+    "alpaca_val": "input_ids-alpaca",
+    "siqa_val": "input_ids-siqa",
+    "open-platypus_val": "input_ids-open-platypus",
+    "stackmathqa_val": "input_ids-stackmathqa",
+    "helpsteer_val": "input_ids-helpsteer",
     # "c4_val": "eval-data_perplexity_v3_small_dolma2-tokenizer_c4_en_val_part-0-00000",
 }
 
@@ -71,9 +102,9 @@ CHECKPOINT_MAP = {
         30000: 8,
         55000: 16,
         110000: 32,
+        205000: 64,
         220000: 64,
-        # 445000: 128, 
-        # 890000: 256 
+        230000: 64,
     },
     60: {
         35000: 12,

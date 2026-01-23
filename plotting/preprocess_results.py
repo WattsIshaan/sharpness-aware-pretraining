@@ -86,7 +86,7 @@ def main():
                 try:
                     token = CHECKPOINT_MAP[size][int(ckpt_match.group(1))] # type: ignore
                 except:
-                    print(f"Skipping ckpt {ckpt_match.group(1)}")
+                    print(f"Skipping ckpt {ckpt_match.group(1)} ", fname)
                     continue
             else:
                 raise ValueError("Unable to find ckpt value in filename with anneal: %s" % fname)
@@ -172,13 +172,14 @@ def main():
         cpt_lr, cpt_wd, cpt_dataset, cpt_tokens, cpt_bs = None, None, None, None, None
         if is_cpt:
             # Extract cpt_dataset and cpt_tokens (tk{5,10,20}M). Default cpt_tokens is 10 if not present
-            cpt_dataset_match = re.search(r'CPT-([a-zA-Z0-9_]+)-tk([0-9]+)M-lr', fname)
+            # Allow '-' in dataset names, e.g., open-platypus
+            cpt_dataset_match = re.search(r'CPT-([a-zA-Z0-9_\-]+)-tk([0-9]+)M-lr', fname)
             if cpt_dataset_match:
                 cpt_dataset = cpt_dataset_match.group(1)
                 cpt_tokens = int(cpt_dataset_match.group(2))
             else:
                 # Fallback to cpt_dataset only (for compatibility)
-                cpt_dataset_match = re.search(r'CPT-([a-zA-Z0-9_]+)-lr', fname)
+                cpt_dataset_match = re.search(r'CPT-([a-zA-Z0-9_\-]+)-lr', fname)
                 cpt_dataset = cpt_dataset_match.group(1) if cpt_dataset_match else "unknown"
                 cpt_tokens = 10  # default
 
@@ -196,7 +197,7 @@ def main():
                 except Exception:
                     raise ValueError(f"Unable to convert to Float: {cpt_lr_cleaned!r}")
             else:
-                raise ValueError("Unable to Parse")
+                raise ValueError("Unable to Parse, %s" % fname)
 
             # Try to match wd including a possible "0" (zero) as value (OLMo2-60m-tk12B-adamw-lr1e-3-wd1e-1-bs256-CPT-starcoder-tk10M-lr4.00e-4-wd0-bs64-eval.json etc)
             cpt_wd_match = re.search(
