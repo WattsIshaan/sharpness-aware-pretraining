@@ -22,10 +22,11 @@ from olmo.util import prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
-def upload_to_gcs(local_dir: Path, gcs_path: str) -> None:
+def upload_to_gcs(local_dir: Path, gcs_path: str, dataset_name: str) -> None:
     """Upload directory contents to Google Cloud Storage."""
     if not gcs_path.startswith("gs://"):
-        gcs_path = f"gs://{gcs_path}"
+        gcs_path = f"gs://{gcs_path}/"
+    gcs_path = f"{gcs_path}/{dataset_name}"
     try:
         cmd = ["gsutil", "-m", "cp", "-r", f"{local_dir}/*", gcs_path]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -161,7 +162,12 @@ def preprocess(example, tokenizer: Tokenizer):
         input_ids.append(tokenizer.eos_token_id)
         label_mask.append(False)
 
-    return {"input_ids": input_ids, "label_mask": label_mask, "n_labels": sum(label_mask)}
+    return {
+        "input_ids": input_ids,
+        "label_mask": label_mask,
+        "n_labels": sum(label_mask),
+        "n_tokens": len(input_ids),
+    }
 
 def main(opts) -> None:
     if Path(opts.tokenizer).is_file():
@@ -170,26 +176,68 @@ def main(opts) -> None:
         tokenizer = Tokenizer.from_pretrained(opts.tokenizer, eos_token_id=opts.eos, pad_token_id=opts.pad)
     dtype = np.uint32 if str(opts.tokenizer).endswith("allenai_dolma2.json") else np.uint16
     
-    all_datasets = []
+    train_datasets = []
+    val_datasets = []
     for d_spec in opts.datasets:
         name, config = d_spec.split(":", 1) if ":" in d_spec else (d_spec, None)
         log.info(f"Loading {name}...")
-        all_datasets.append(load_dataset_with_fallback(name, config))
+        train_datasets.append(load_dataset_with_fallback(name, config, split="train"))
+        for split_name in ("validation", "test"):
+            try:
+                val_datasets.append(load_dataset_with_fallback(name, config, split=split_name))
+                log.info(f"Using '{split_name}' split for validation from {name}.")
+                break
+            except Exception:
+                continue
     
-    dataset = ds.concatenate_datasets(all_datasets) if len(all_datasets) > 1 else all_datasets[0]
+    train_dataset = (
+        ds.concatenate_datasets(train_datasets) if len(train_datasets) > 1 else train_datasets[0]
+    )
+    val_dataset = (
+        ds.concatenate_datasets(val_datasets) if len(val_datasets) > 1 else val_datasets[0]
+        if val_datasets
+        else None
+    )
     
     log.info("Tokenizing variable length sequences...")
-    dataset = dataset.map(partial(preprocess, tokenizer=tokenizer), batched=False, remove_columns=dataset.column_names, num_proc=opts.num_proc)
-    dataset = dataset.filter(lambda x: x["n_labels"] > 0, num_proc=opts.num_proc)
+    train_dataset = train_dataset.map(
+        partial(preprocess, tokenizer=tokenizer),
+        batched=False,
+        remove_columns=train_dataset.column_names,
+        num_proc=opts.num_proc,
+    )
+    train_dataset = train_dataset.filter(lambda x: x["n_labels"] > 0, num_proc=opts.num_proc)
+    if val_dataset is not None:
+        val_dataset = val_dataset.map(
+            partial(preprocess, tokenizer=tokenizer),
+            batched=False,
+            remove_columns=val_dataset.column_names,
+            num_proc=opts.num_proc,
+        )
+        val_dataset = val_dataset.filter(lambda x: x["n_labels"] > 0, num_proc=opts.num_proc)
 
     output_dir = Path(opts.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
     (output_dir / "train").mkdir(exist_ok=True)
     (output_dir / "val").mkdir(exist_ok=True)
 
-    # 80/20 Split based on token blocks
-    train_tokens = int((opts.max_tokens * 0.8) // opts.seq_len) * opts.seq_len
-    val_tokens = int((opts.max_tokens * 0.2) // opts.seq_len) * opts.seq_len
+    train_total_tokens = int(np.sum(train_dataset["n_tokens"]))
+    val_total_tokens = int(np.sum(val_dataset["n_tokens"])) if val_dataset is not None else 0
+    total_available = train_total_tokens + val_total_tokens
+    max_tokens = min(opts.max_tokens, total_available if val_dataset is not None else train_total_tokens)
+    log.info(f"Dataset length (train docs): {len(train_dataset)}")
+    if val_dataset is not None:
+        log.info(f"Dataset length (val docs): {len(val_dataset)}")
+
+    # 80/20 Split based on token blocks, bounded by available tokens
+    train_target = min(int(max_tokens * 0.8), train_total_tokens)
+    val_target = (
+        min(int(max_tokens * 0.2), val_total_tokens)
+        if val_dataset is not None
+        else min(int(max_tokens * 0.2), max(0, train_total_tokens - train_target))
+    )
+    train_tokens = (train_target // opts.seq_len) * opts.seq_len
+    val_tokens = (val_target // opts.seq_len) * opts.seq_len
     total_target = train_tokens + val_tokens
 
     train_ids = np.memmap(str(output_dir / "train/input_ids.npy"), dtype=dtype, mode="w+", shape=(train_tokens,))
@@ -197,37 +245,75 @@ def main(opts) -> None:
     val_ids = np.memmap(str(output_dir / "val/input_ids.npy"), dtype=dtype, mode="w+", shape=(val_tokens,))
     val_mask = np.memmap(str(output_dir / "val/label_mask.npy"), dtype=np.bool_, mode="w+", shape=(val_tokens,))
 
-    log.info(f"Packing {total_target:,d} tokens into memmap (Train: {train_tokens:,d}, Val: {val_tokens:,d})...")
+    log.info(
+        f"Packing {total_target:,d} tokens into memmap (Train: {train_tokens:,d}, Val: {val_tokens:,d})..."
+    )
     
-    curr_tokens = 0
-    examples_saved = 0
-    for ex in track(dataset, description="Writing to disk"):
-        ids, mask = ex["input_ids"], ex["label_mask"]
-        n = len(ids)
-        
-        if curr_tokens < train_tokens:
-            chunk = min(n, train_tokens - curr_tokens)
-            train_ids[curr_tokens : curr_tokens + chunk] = ids[:chunk]
-            train_mask[curr_tokens : curr_tokens + chunk] = mask[:chunk]
-        elif curr_tokens < total_target:
-            v_offset = curr_tokens - train_tokens
-            chunk = min(n, total_target - curr_tokens)
-            val_ids[v_offset : v_offset + chunk] = ids[:chunk]
-            val_mask[v_offset : v_offset + chunk] = mask[:chunk]
-        else:
-            break
-        curr_tokens += n
-        examples_saved += 1
+    train_tokens_written = 0
+    val_tokens_written = 0
+    train_examples_saved = 0
+    val_examples_saved = 0
+    if val_dataset is None:
+        curr_tokens = 0
+        for ex in track(train_dataset, description="Writing to disk"):
+            ids, mask = ex["input_ids"], ex["label_mask"]
+            n = len(ids)
+            if curr_tokens < train_tokens:
+                chunk = min(n, train_tokens - curr_tokens)
+                train_ids[curr_tokens : curr_tokens + chunk] = ids[:chunk]
+                train_mask[curr_tokens : curr_tokens + chunk] = mask[:chunk]
+                train_tokens_written += chunk
+                train_examples_saved += 1
+            elif curr_tokens < total_target:
+                v_offset = curr_tokens - train_tokens
+                chunk = min(n, total_target - curr_tokens)
+                val_ids[v_offset : v_offset + chunk] = ids[:chunk]
+                val_mask[v_offset : v_offset + chunk] = mask[:chunk]
+                val_tokens_written += chunk
+                val_examples_saved += 1
+            else:
+                break
+            curr_tokens += n
+    else:
+        for ex in track(train_dataset, description="Writing train to disk"):
+            ids, mask = ex["input_ids"], ex["label_mask"]
+            n = len(ids)
+            if train_tokens_written >= train_tokens:
+                break
+            chunk = min(n, train_tokens - train_tokens_written)
+            train_ids[train_tokens_written : train_tokens_written + chunk] = ids[:chunk]
+            train_mask[train_tokens_written : train_tokens_written + chunk] = mask[:chunk]
+            train_tokens_written += chunk
+            train_examples_saved += 1
+
+        if val_tokens > 0:
+            for ex in track(val_dataset, description="Writing val to disk"):
+                ids, mask = ex["input_ids"], ex["label_mask"]
+                n = len(ids)
+                if val_tokens_written >= val_tokens:
+                    break
+                chunk = min(n, val_tokens - val_tokens_written)
+                val_ids[val_tokens_written : val_tokens_written + chunk] = ids[:chunk]
+                val_mask[val_tokens_written : val_tokens_written + chunk] = mask[:chunk]
+                val_tokens_written += chunk
+                val_examples_saved += 1
 
     train_ids.flush()
     val_ids.flush()
     log.info("--- Processing Summary ---")
-    log.info(f"Total tokens saved: {curr_tokens:,d}")
-    log.info(f"Total examples (documents) packed: {examples_saved:,d}")
-    log.info(f"Train/Val blocks ({opts.seq_len}): {train_tokens//opts.seq_len} / {val_tokens//opts.seq_len}")
+    log.info(f"Train tokens saved: {train_tokens_written:,d}")
+    log.info(f"Val tokens saved: {val_tokens_written:,d}")
+    log.info(
+        f"Train/Val blocks ({opts.seq_len}): {train_tokens//opts.seq_len} / {val_tokens//opts.seq_len}"
+    )
+    log.info(
+        f"Train/Val examples packed: {train_examples_saved:,d} / {val_examples_saved:,d}"
+    )
 
     if opts.gcs_bucket:
-        upload_to_gcs(output_dir, opts.gcs_bucket)
+        assert len(opts.datasets) == 1, "Only one dataset can be uploaded to GCS at a time"
+        dataset_name = opts.datasets[0].split(":")[0].replace("/", "_")
+        upload_to_gcs(output_dir, opts.gcs_bucket, dataset_name)
 
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser()
