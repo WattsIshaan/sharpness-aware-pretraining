@@ -4,33 +4,6 @@ OPTIM = ['adamw', 'sam']
 RHO = [5e-2]
 VERBOSE = False
 
-TRADEOFF_THRESHOLD = {
-    20: {
-        "starcoder": 0.025,
-        "musicpile": 0.025,
-        "tulu": 0.05,
-        "stackmathqa": 0.03,
-        "gsm8k": 0.07,
-        "siqa": 0.03,
-    },
-    60: {
-        "starcoder": 0.025,
-        "musicpile": 0.025,
-        "tulu": 0.05,
-        "stackmathqa": 0.03,
-        "gsm8k": 0.07,
-        "siqa": 0.03,
-    },
-    150: {
-        "starcoder": 0.025,
-        "musicpile": 0.025,
-        "tulu": 0.05,
-        "stackmathqa": 0.03,
-        "gsm8k": 0.07,
-        "siqa": 0.03,
-    },
-}
-
 RESULTS_DIR = "/home/iwatts/catastrophic-forgetting/results/"
 
 ANNEAL_CONFIG = {

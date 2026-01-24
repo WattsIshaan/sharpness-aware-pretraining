@@ -4,7 +4,7 @@ import json
 from scipy.spatial import ConvexHull
 import numpy as np
 
-from utils.config_globals import SIZE, CPT_DATASET, OPTIM, TOKEN_LIST, RESULTS_DIR, TRADEOFF_THRESHOLD
+from utils.config_globals import SIZE, CPT_DATASET, OPTIM, TOKEN_LIST, RESULTS_DIR
 from utils.plotting_globals import OPTIM_MAP, FONTSIZE, FIG_WIDTH, COLOR_MAP, LRS_MAP
 from utils.helper import get_run_info
 
@@ -91,11 +91,13 @@ def make_tradeoff_pareto_token_matched(results):
             if len(tokens_list) == 1:
                 axs = [axs]
 
-            cpt_min = float('inf')
+            
+            global_cpt_min = []
             for col, t in enumerate(tokens_list):
                 ax = axs[col]
 
                 for optim in OPTIM:
+                    cpt_min = float('inf')
                     run_info = get_run_info(results, size, optim, cpt_dataset)
                     if run_info is None:
                         print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]} for {cpt_dataset.capitalize()}")
@@ -149,10 +151,11 @@ def make_tradeoff_pareto_token_matched(results):
                                     continue
 
                     ax.scatter(dclm_val, cpt_val, label = OPTIM_MAP[optim], marker="o", color=COLOR_MAP[optim])
+                    global_cpt_min.append(cpt_min)
                     # ax.scatter(tmp["wd0"]["x"], tmp["wd0"]["y"], label = OPTIM_MAP[optim] + " wd0" , marker="*")
                     # ax.scatter(tmp["bs32"]["x"], tmp["bs32"]["y"], label = OPTIM_MAP[optim] + " wd1e-1", marker="v")
                     # ax.scatter(tmp["bs128"]["x"], tmp["bs128"]["y"], label = OPTIM_MAP[optim] + " bs128", marker="p")
-                    if optim == "adamw":
+                    if optim == "sam":
                         for x, y, lr in zip(dclm_val, cpt_val, used_cpt_lrs):
                             ax.text(x, y, f"{lr}", fontsize=8, ha='right', va='bottom', color='black')
 
@@ -193,7 +196,8 @@ def make_tradeoff_pareto_token_matched(results):
 
             for col, t in enumerate(tokens_list):
                 ax = axs[col]
-                cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD[size][cpt_dataset])
+                # cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD[size][cpt_dataset])
+                cpt_threshold = max(global_cpt_min)
                 ax.axhline(cpt_threshold, linestyle='--', color='black', label="FT Threshold")
 
             fig.suptitle(f"OLMo-{size}M | {cpt_dataset.capitalize()} | FT Loss v/s PT Loss (Token Matched)", fontsize=FONTSIZE["SUP_TITLE"])
@@ -216,11 +220,12 @@ def make_tradeoff_pareto_compute_matched(results):
             if len(tokens_list) == 1:
                 axs = [axs]
 
-            cpt_min = float('inf')
+            global_cpt_min = []
             for col in range(len(tokens_list)-1):
 
                 ax = axs[col]
                 for optim in OPTIM:
+                    cpt_min = float('inf')
                     run_info = get_run_info(results, size, optim, cpt_dataset)
                     if run_info is None:
                         print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]} for {cpt_dataset.capitalize()}")
@@ -281,6 +286,7 @@ def make_tradeoff_pareto_compute_matched(results):
                                     continue
 
                     ax.scatter(dclm_val, cpt_val, label = OPTIM_MAP[optim], marker="o", color=COLOR_MAP[optim])
+                    global_cpt_min.append(min(cpt_val))
                     # ax.scatter(tmp["wd0"]["x"], tmp["wd0"]["y"], label = OPTIM_MAP[optim] + " wd0" , marker="*")
                     # ax.scatter(tmp["bs32"]["x"], tmp["bs32"]["y"], label = OPTIM_MAP[optim] + " bs32", marker="v")
                     # ax.scatter(tmp["bs128"]["x"], tmp["bs128"]["y"], label = OPTIM_MAP[optim] + " bs128", marker="p")
@@ -319,7 +325,7 @@ def make_tradeoff_pareto_compute_matched(results):
 
             for col in range(len(tokens_list)-1):
                 ax = axs[col]
-                cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD)
+                cpt_threshold = max(global_cpt_min)
                 ax.axhline(cpt_threshold, linestyle='--', color='black', label="FT Threshold")
 
             fig.suptitle(f"OLMo-{size}M | {cpt_dataset.capitalize()} | FT Loss v/s PT Loss (Compute Matched)", fontsize=FONTSIZE["SUP_TITLE"])
