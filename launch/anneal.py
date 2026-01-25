@@ -4,16 +4,16 @@ from experiments import ArtifactSet  # type: ignore
 from launch.artifacts import AnnealedModel, ModelEvaluation
 
 PT_TOKENS = {
-    20: {
+    "20m": {
         17: {3e-3: [4, 8, 16]},
         65: {1e-3: [32, 64]},
     },
-    60: {
+    "60m": {
         25 : {1e-3: [12, 24]},
         100: {6e-4: [48, 96]},
         200: {3e-4: [192]},
     },
-    150: {
+    "150m": {
         31: {1e-3: [15, 30]},
         61: {6e-4: [60]},
         121: {3e-4: [120]},
