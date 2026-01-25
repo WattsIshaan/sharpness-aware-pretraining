@@ -70,7 +70,8 @@ def main():
                     raise ValueError(f"Could not parse quantization bit value from filename: {fname!r}")
 
         # If "anneal" is present, get ckpt<> value as token, else get tk<>B
-        anneal_steps, anneal_optim, anneal_percent, anneal_optim = None, None, None, None
+        token = None
+        anneal_steps, anneal_optim, anneal_percent, anneal_optim, anneal_match = None, None, None, None, None
         if "anneal" in fname:
             pt_lrs = "wsd"
             # Check for 'steps' and extract the int value
@@ -83,8 +84,22 @@ def main():
             # Try to find 'ckpt<digits>' (e.g. ckpt55000)
             ckpt_match = re.search(r'ckpt(\d+)', fname)
             if ckpt_match:
+                
                 try:
-                    token = CHECKPOINT_MAP[size][int(ckpt_match.group(1))] # type: ignore
+                    token_match = CHECKPOINT_MAP["token"][size].get(int(ckpt_match.group(1)), None) # type: ignore
+                    compute_match = CHECKPOINT_MAP["compute"][size].get(int(ckpt_match.group(1)), None) # type: ignore
+
+                    
+                    if token_match is not None:
+                        token = token_match
+                        anneal_match = "token"
+                    if compute_match is not None:
+                        token = compute_match
+                        if anneal_match is None:
+                            anneal_match = "compute"
+                        else:
+                            anneal_match = "both"
+                    assert token is not None, f"Unable to find ckpt {ckpt_match.group(1)} in CHECKPOINT_MAP for {fname}"
                 except:
                     print(f"Skipping ckpt {ckpt_match.group(1)} ", fname)
                     continue
@@ -272,7 +287,7 @@ def main():
             run_info["anneal_steps"] = anneal_steps
             run_info["anneal_percent"] = anneal_percent
             run_info["anneal_optim"] = anneal_optim
-        
+            run_info["anneal_match"] = anneal_match
         results.append(run_info)
 
     with open(os.path.join(RESULTS_DIR, "final_results.json"), "w") as file:

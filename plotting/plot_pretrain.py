@@ -4,11 +4,11 @@ import argparse
 import numpy as np
 
 from utils.helper import get_run_info
-from utils.config_globals import ANNEAL_CONFIG, RESULTS_DIR, SIZE, OPTIM, TOKEN_LIST
-from utils.plotting_globals import FIG_WIDTH, OPTIM_MAP, FONTSIZE, COLOR_MAP
+from utils.config_globals import ANNEAL_CONFIG, RESULTS_DIR, SIZE, OPTIM, TOKEN_LIST, LRS
+from utils.plotting_globals import FIG_WIDTH, OPTIM_MAP, FONTSIZE, COLOR_MAP, LRS_MAP
 import json
 
-def make_fixed_token_plot(results):
+def pretrain_optim_token(results):
 
     n_sizes = len(SIZE)
     fig, axs = plt.subplots(1, n_sizes, figsize=(FIG_WIDTH * n_sizes, 4), sharex=True)
@@ -61,7 +61,7 @@ def make_fixed_token_plot(results):
     plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/optim_all_size_token.png"), bbox_inches='tight')
     plt.close()
 
-def make_fixed_compute_plot(results):
+def pretrain_optim_compute(results):
 
     n_sizes = len(SIZE)
     fig, axs = plt.subplots(1, n_sizes, figsize=(FIG_WIDTH * n_sizes, 4), sharex=True)
@@ -122,71 +122,72 @@ def make_fixed_compute_plot(results):
     plt.close()
 
 
-def make_lrs_plot(results):
 
+def pretrain_lrs(results, anneal_match="token"):
 
     n_sizes = len(SIZE)
     fig, axs = plt.subplots(1, n_sizes, figsize=(FIG_WIDTH * n_sizes, 4), sharex=True)
     optim = "adamw"
 
-    for col, size in enumerate(SIZE):
-        token_budget = TOKEN_LIST[size][-1]
-        ax = axs[col]
-        for pt_lrs in ["cosine", "wsd"]:
-            if pt_lrs == "cosine":
-                run_info = get_run_info(results, size, optim, anneal=False)
+    # To handle the case where axs is not iterable if n_sizes == 1
+    if n_sizes == 1:
+        axs = [axs]
 
-                if run_info is None:
-                    continue
+    plot_handles = []
+    plot_labels = []
 
-                cosine_dclm_val = run_info["pretrain"][token_budget]["dclm_val"]
-                ax.axhline(
-                    cosine_dclm_val,
-                    label="Cosine",
-                    color="black",
-                    linestyle="--"
-                )
+    for col, (size, ax) in enumerate(zip(SIZE, axs)):
+        for lrs in (LRS):
 
-            elif pt_lrs == "wsd":
+            if lrs == "cosine":
+                    run_info = get_run_info(results, size, optim, anneal=False)
+            else:
+                anneal_optim = lrs.split("_")[1]
+                if optim == "sam":
+                    run_info = get_run_info(results, size, optim, anneal=True, anneal_percent=10, anneal_optim=anneal_optim, anneal_match=anneal_match)
+                else:
+                    run_info = get_run_info(results, size, optim, anneal=True, anneal_percent=10, anneal_optim=anneal_optim, anneal_match="token")
 
-                anneal_percent = ANNEAL_CONFIG["percent"]
-                for anneal_optim in ANNEAL_CONFIG["anneal_optim"]:
-                    anneal_dclm_val = np.empty_like(anneal_percent, dtype=float)
-                    for j, p in enumerate(anneal_percent):
-                        run_info = get_run_info(results, size, optim, anneal=True, anneal_percent=p, anneal_optim=anneal_optim)
+            if run_info is None:
+                print(f"Skipping {lrs} for OLMo {size}M")
+                continue
 
-                        if run_info is None:
-                            anneal_dclm_val[j] = np.nan # type: ignore
-                            continue
-                        
-                        anneal_dclm_val[j] = run_info["pretrain"][token_budget]["dclm_val"]
+            x = [r["multiplier"] for r in run_info["pretrain"].values()]
+            y = [r["dclm_val"] for r in run_info["pretrain"].values()]
+        
+            handle, = ax.plot(
+                x, y,
+                marker="o",
+                label=LRS_MAP[lrs],
+                color=COLOR_MAP[lrs]
+            )
 
-                    ax.plot(
-                        anneal_percent,
-                        anneal_dclm_val,
-                        color=COLOR_MAP[anneal_optim], 
-                        marker="o",
-                        label=f"WSD (Anneal Optim: {OPTIM_MAP[anneal_optim]})"
-                    )
+            if col == 1:
+                plot_handles.append(handle)
+                plot_labels.append(f"{LRS_MAP[lrs]}")
+            
 
-        ax.set_xlabel("Percentage of Total Steps for Annealing", fontsize=FONTSIZE["AXIS"])
+        ax.set_xlabel("Tokens / Param", fontsize=FONTSIZE["AXIS"])
         if col == 0:
-            ax.set_ylabel(f"Pretrain DCLM Val Loss", fontsize=FONTSIZE["AXIS"])
+            ax.set_ylabel("DCLM Val Loss", fontsize=FONTSIZE["AXIS"])
+        ax.set_xscale('log')
         ax.set_title(f"OLMo-{size}M", fontsize=FONTSIZE["TITLE"])
-
-        if col == len(SIZE)-1:
-            ax.legend(fontsize=FONTSIZE["LEGEND"])
-
-        ax.tick_params(axis='both', which='major', labelsize=FONTSIZE["TICKS"])
-        ax.tick_params(axis='both', which='minor', labelsize=FONTSIZE["TICKS"])
         ax.grid(True)
+        ax.tick_params(axis='x', labelsize=FONTSIZE["TICKS"])
+        ax.tick_params(axis='y', labelsize=FONTSIZE["TICKS"])
 
-    fig.subplots_adjust(top=0.83)  # Make room for the suptitle before tight_layout
-    fig.suptitle(f"Pretrain DCLM Val Loss across Learning Rate Schedulers", fontsize=FONTSIZE["SUP_TITLE"])
+    # Only show legend on the last axis (or can do fig-wide)
+    axs[2].legend(plot_handles, plot_labels, fontsize=FONTSIZE["LEGEND"])
+    plt.suptitle(f"Pretrain Val Loss across Learning Rate Schedulers ({anneal_match.capitalize()} Matched)", fontsize=FONTSIZE["SUP_TITLE"])
+
+    plt.tight_layout()
     os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
-    # plt.tight_layout(rect=[0, 0, 1, 0.93])
-    plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/lrs_all_size_token.png"), bbox_inches='tight')
+    plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/lrs_all_size_{anneal_match}.png"), bbox_inches='tight')
     plt.close()
+
+
+
+
 
 
 def main(args):
@@ -195,16 +196,18 @@ def main(args):
         results = json.load(file)
 
     if args.plot == "optim_token":
-        make_fixed_token_plot(results)
+        pretrain_optim_token(results)
     elif args.plot == "optim_compute":
-        make_fixed_compute_plot(results)
-    elif args.plot == "lrs":
-        make_lrs_plot(results)
-    
+        pretrain_optim_compute(results)
+    elif args.plot == "lrs_token":
+        pretrain_lrs(results, anneal_match="token")
+    elif args.plot == "lrs_compute":
+        pretrain_lrs(results, anneal_match="compute")
     else:
-        make_fixed_compute_plot(results)
-        make_fixed_token_plot(results)
-        make_lrs_plot(results)
+        pretrain_optim_compute(results)
+        pretrain_optim_token(results)
+        pretrain_lrs(results, anneal_match="token")
+        pretrain_lrs(results, anneal_match="compute")
 
 
 if __name__ == "__main__":
@@ -213,7 +216,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--plot",
         type=str,
-        choices=["all", "optim_token", "optim_compute", "lrs"],
+        choices=["all", "optim_token", "optim_compute", "lrs_token", "lrs_compute"],
         default="all",
         help="Which plot to generate: all, fixed_token, fixed_compute, lrs (default: all)",
     )

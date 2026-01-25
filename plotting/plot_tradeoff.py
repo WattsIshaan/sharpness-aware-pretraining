@@ -5,17 +5,21 @@ import json
 from scipy.spatial import ConvexHull
 import numpy as np
 
-from utils.config_globals import SIZE, CPT_DATASET, OPTIM, TOKEN_LIST, RESULTS_DIR, TRADEOFF_THRESHOLD
+from utils.config_globals import SIZE, CPT_DATASET, OPTIM, TOKEN_LIST, RESULTS_DIR
 from utils.plotting_globals import OPTIM_MAP, FONTSIZE, FIG_WIDTH, COLOR_MAP
 from utils.helper import get_run_info
 
 def make_tradeoff_summary(results):
 
+    with open(os.path.join(RESULTS_DIR, "thresholds_token.json"), "r") as file:
+        thresholds = json.load(file)
+
     for size in SIZE:
         for cpt_dataset in CPT_DATASET:
-            plt.figure(figsize=(FIG_WIDTH * 1.5, 6))
-            tokens_list = TOKEN_LIST[size][::-1]
 
+            print(f"Plotting {cpt_dataset.capitalize()} for OLMo {size}M")
+            plt.figure(figsize=(FIG_WIDTH * 1.5, 6))
+            tokens_list = TOKEN_LIST[size]
             plotting_data = dict()
             for optim in OPTIM:
                 plotting_data[optim] = {
@@ -23,7 +27,6 @@ def make_tradeoff_summary(results):
                     "y": []
                 }
 
-            cpt_min = float('inf')
             for i, t in enumerate(tokens_list):
                 for optim in OPTIM:
                     run_info = get_run_info(results, size, optim, cpt_dataset)
@@ -44,9 +47,6 @@ def make_tradeoff_summary(results):
                                 try:
                                     x_val = run_info["cpt"][cpt_lr][cpt_wd][cpt_bs][t]["dclm_val"]
                                     y_val = run_info["cpt"][cpt_lr][cpt_wd][cpt_bs][t][cpt_dataset]
-                                    if i == 0:
-                                        cpt_min = min(y_val, cpt_min)
-
                                     plotting_data[optim]["tmp_x"].append(x_val)
                                     plotting_data[optim]["tmp_y"].append(y_val)
                                 except:
@@ -76,10 +76,9 @@ def make_tradeoff_summary(results):
                     #         break
 
                     hull_x, hull_y = new_points[:, 0], new_points[:, 1]
-                    additional_threshold = 0
                     x_at_threshold = None
+                    cpt_threshold = thresholds[str(size)][cpt_dataset]
                     while x_at_threshold is None:
-                        cpt_threshold = cpt_min * (1 + TRADEOFF_THRESHOLD + additional_threshold)
                         for idx in range(len(hull_x) - 1):
                             x1, x2 = hull_x[idx], hull_x[idx + 1]
                             y1, y2 = hull_y[idx], hull_y[idx + 1]
@@ -90,9 +89,8 @@ def make_tradeoff_summary(results):
                                 else:
                                     x_at_threshold = x1
                                 break
-                        if x_at_threshold is None:
-                            print(f"Increasing Threshold for {OPTIM_MAP[optim]}, {t}B, {size}M, {cpt_dataset}")
-                            additional_threshold += TRADEOFF_THRESHOLD/10
+                    
+                    assert x_at_threshold is not None, f"No threshold found for {OPTIM_MAP[optim]}, {t}B, {size}M, {cpt_dataset}"
                     
                     plotting_data[optim]["y"].append(x_at_threshold)
 

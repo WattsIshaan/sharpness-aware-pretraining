@@ -15,7 +15,8 @@ def get_run_info(
     anneal_steps=None, 
     anneal_percent=None, 
     model_type="olmo", 
-    anneal_optim="adamw"
+    anneal_optim="adamw",
+    anneal_match="token"
 ):
 
     run_info = dict()
@@ -31,7 +32,7 @@ def get_run_info(
 
     if anneal:
         assert anneal_steps is not None or anneal_percent is not None 
-        all_runs = [r for r in all_runs if r.get("pretrain_lrs") == "wsd" and r.get("anneal_optim") == anneal_optim]
+        all_runs = [r for r in all_runs if r.get("pretrain_lrs") == "wsd" and r.get("anneal_optim") == anneal_optim and r.get("anneal_match") == (anneal_match or "both")]
         if anneal_steps is not None:
             all_runs = [r for r in all_runs if r.get("anneal_steps") == anneal_steps]
         if anneal_percent is not None:
