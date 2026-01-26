@@ -14,19 +14,30 @@ OPTIM_MAP = {
     "sam": "SAM"
 }
 
+CPT_DATASET_MAP = {
+    "starcoder": "StarCoder",
+    "musicpile": "MusicPile",
+    "tulu": "Tulu",
+    "gsm8k": "GSM8K",
+    "siqa": "SIQA",
+    "stackmathqa": "StackMathQA"
+}
+
 COLOR_MAP = {
     "adamw": "blue",
     "sam": "orange",
     "wsd_sam": "red",
     "wsd_adamw": "green",
+    "cosine_adamw": "blue",
+    "cosine_sam": "orange",
     "cosine": "blue",
-    4: "red",
-    8: "green"
 }
 
 LRS_MAP = {
     "wsd_sam": "WSD (SAM Anneal)",
     "wsd_adamw": "WSD (AdamW Anneal)",
-    "cosine": "Cosine"
+    "cosine": "Cosine",
+    "cosine_adamw": "Cosine (AdamW)",
+    "cosine_sam": "Cosine (SAM)",
 }
 
