@@ -13,6 +13,7 @@ ANNEAL_CONFIG = {
 }
 
 LRS = ["wsd_adamw", "wsd_sam", "cosine"]
+ALL_LRS = ["wsd_adamw", "wsd_sam", "cosine_adamw", "cosine_sam"]
 
 
 TASKNAME_MAP = {

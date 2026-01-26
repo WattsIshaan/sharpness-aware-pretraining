@@ -6,7 +6,7 @@ from scipy.spatial import ConvexHull
 import numpy as np
 
 from utils.config_globals import SIZE, CPT_DATASET, OPTIM, TOKEN_LIST, RESULTS_DIR
-from utils.plotting_globals import OPTIM_MAP, FONTSIZE, FIG_WIDTH, COLOR_MAP
+from utils.plotting_globals import OPTIM_MAP, FONTSIZE, FIG_WIDTH, COLOR_MAP, CPT_DATASET_MAP
 from utils.helper import get_run_info
 
 def make_tradeoff_summary(results):
@@ -104,9 +104,9 @@ def make_tradeoff_summary(results):
                 )
             plt.grid(True)
             plt.legend(fontsize=FONTSIZE["LEGEND"])
-            plt.title(f"OLMo-{size}M - {cpt_dataset.capitalize()}", fontsize=FONTSIZE["TITLE"])
-            plt.xlabel("DCLM Pretrain Val Loss", fontsize=FONTSIZE["AXIS"])
-            plt.ylabel("Thresholded DCLM Val Loss after FT", fontsize=FONTSIZE["AXIS"])
+            plt.title(CPT_DATASET_MAP[cpt_dataset], fontsize=FONTSIZE["TITLE"])
+            plt.xlabel("Pretrain Loss", fontsize=FONTSIZE["AXIS"])
+            plt.ylabel("Thresholded Pretrain Loss after Fine-tuning", fontsize=FONTSIZE["AXIS"])
             plt.tick_params(axis='both', which='major', labelsize=FONTSIZE["TICKS"])
             plt.tick_params(axis='both', which='minor', labelsize=FONTSIZE["TICKS"])
             plt.tight_layout()

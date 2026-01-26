@@ -40,23 +40,23 @@ def perturbation_sam_vs_adamw_cosine(results):
                     ax.set_xlabel("Tokens / Param", fontsize=FONTSIZE["AXIS"])
                     ax.set_xscale('log')
                 else:
-                    ax.set_xlabel("DCLM Pretrain Val Loss", fontsize=FONTSIZE["AXIS"])
+                    ax.set_xlabel("Pretrain Loss", fontsize=FONTSIZE["AXIS"])
                 if idx == 0:
-                    ax.set_ylabel("DCLM Val Loss after Perturbed", fontsize=FONTSIZE["AXIS"])
+                    ax.set_ylabel("Pretrain Loss after Perturbation", fontsize=FONTSIZE["AXIS"])
 
                 ax.tick_params(axis='x', labelsize=FONTSIZE["TICKS"])
                 ax.tick_params(axis='y', labelsize=FONTSIZE["TICKS"])
                 
             # Use only one legend for the entire figure; use the handles/labels from the first axis
             handles, labels = axs[0].get_legend_handles_labels()
-            fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5), fontsize=FONTSIZE["LEGEND"])
+            axs[1].legend(handles, labels, fontsize=FONTSIZE["LEGEND"])
 
-            if match == "token":
-                plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs Pretrain Token / Param (Cosine)", fontsize=FONTSIZE["SUP_TITLE"])
-            elif match == "loss":
-                plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs DCLM Pretrain Val Loss (Cosine)", fontsize=FONTSIZE["SUP_TITLE"])
+            # if match == "token":
+            #     plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs Pretrain Token / Param (Cosine)", fontsize=FONTSIZE["SUP_TITLE"])
+            # elif match == "loss":
+            #     plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs DCLM Pretrain Val Loss (Cosine)", fontsize=FONTSIZE["SUP_TITLE"])
                 
-            plt.tight_layout(rect=[0, 0, 0.98, 1])  # type: ignore
+            plt.tight_layout()  # type: ignore
             
             os.makedirs(os.path.join(RESULTS_DIR, f"plots/perturbation/optim_cosine/"), exist_ok=True)
             plt.savefig(f"results/plots/perturbation/optim_cosine/{size}m_{match}.png", bbox_inches="tight")
@@ -100,23 +100,23 @@ def perturbation_lrs(results):
                     ax.set_xlabel("Tokens / Param", fontsize=FONTSIZE["AXIS"])
                     ax.set_xscale('log')
                 else:
-                    ax.set_xlabel("DCLM Pretrain Val Loss", fontsize=FONTSIZE["AXIS"])
+                    ax.set_xlabel("Pretrain Loss", fontsize=FONTSIZE["AXIS"])
                 if col == 0:
-                    ax.set_ylabel("DCLM Val Loss after Perturbed", fontsize=FONTSIZE["AXIS"])
+                    ax.set_ylabel("Pretrain Loss after Perturbation", fontsize=FONTSIZE["AXIS"])
 
                 ax.tick_params(axis='x', labelsize=FONTSIZE["TICKS"])
                 ax.tick_params(axis='y', labelsize=FONTSIZE["TICKS"])
                 
             # Use only one legend for the entire figure; use the handles/labels from the first axis
             handles, labels = axs[0].get_legend_handles_labels()
-            fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5), fontsize=FONTSIZE["LEGEND"])
+            axs[len(LRS)-1].legend(handles, labels, fontsize=FONTSIZE["LEGEND"])
 
-            if match == "token":
-                plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs Pretrain Token / Param (LRS)", fontsize=FONTSIZE["SUP_TITLE"])
-            elif match == "loss":
-                plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs DCLM Pretrain Val Loss (LRS)", fontsize=FONTSIZE["SUP_TITLE"])
+            # if match == "token":
+            #     plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs Pretrain Token / Param (LRS)", fontsize=FONTSIZE["SUP_TITLE"])
+            # elif match == "loss":
+            #     plt.suptitle(f"OLMo-{size}M DCLM Val Loss after Perturbation vs DCLM Pretrain Val Loss (LRS)", fontsize=FONTSIZE["SUP_TITLE"])
                 
-            plt.tight_layout(rect=[0, 0, 0.98, 1])  # type: ignore
+            plt.tight_layout()  # type: ignore
             
             os.makedirs(os.path.join(RESULTS_DIR, f"plots/perturbation/lrs/"), exist_ok=True)
             plt.savefig(f"results/plots/perturbation/lrs/{size}m_{match}.png", bbox_inches="tight")

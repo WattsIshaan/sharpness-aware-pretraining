@@ -10,137 +10,96 @@ import json
 
 def pretrain_optim_token(results):
 
-    n_sizes = len(SIZE)
-    fig, axs = plt.subplots(1, n_sizes, figsize=(FIG_WIDTH * n_sizes, 4), sharex=True)
+    os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
 
-    # To handle the case where axs is not iterable if n_sizes == 1
-    if n_sizes == 1:
-        axs = [axs]
+    for size in SIZE:
+        fig, ax = plt.subplots(1, 1, figsize=(FIG_WIDTH, 4))
 
-    plot_handles = []
-    plot_labels = []
+        for optim in OPTIM:
+            run_info = get_run_info(results, size, optim)
+            if run_info is None:
+                print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]}")
+                continue 
 
-    for i, (size, ax) in enumerate(zip(SIZE, axs)):
-        for j, optim in enumerate(OPTIM):
-            
-                run_info = get_run_info(results, size, optim)
-                if run_info is None:
-                    print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]}")
-                    continue 
+            x = [r["multiplier"] for r in run_info["pretrain"].values()]
+            y = [r["dclm_val"] for r in run_info["pretrain"].values()]
 
-                x = [r["multiplier"] for r in run_info["pretrain"].values()]
-                y = [r["dclm_val"] for r in run_info["pretrain"].values()]
-
-                handle, = ax.plot(
-                    x, y,
-                    marker="o",
-                    label=OPTIM_MAP[optim],
-                    color=COLOR_MAP[optim]
-                )
-
-                if i == 0:
-                    plot_handles.append(handle)
-                    plot_labels.append(f"{OPTIM_MAP[optim]}")
-            
+            ax.plot(
+                x, y,
+                marker="o",
+                label=OPTIM_MAP[optim],
+                color=COLOR_MAP[optim]
+            )
 
         ax.set_xlabel("Tokens / Param", fontsize=FONTSIZE["AXIS"])
-        if i == 0:
-            ax.set_ylabel("DCLM Val Loss", fontsize=FONTSIZE["AXIS"])
+        ax.set_ylabel("Pretrain Loss", fontsize=FONTSIZE["AXIS"])
         ax.set_xscale('log')
-        ax.set_title(f"OLMo-{size}M", fontsize=FONTSIZE["TITLE"])
+        # ax.set_title(f"{size}M", fontsize=FONTSIZE["TITLE"])
         ax.grid(True)
         ax.tick_params(axis='x', labelsize=FONTSIZE["TICKS"])
         ax.tick_params(axis='y', labelsize=FONTSIZE["TICKS"])
+        ax.legend(fontsize=FONTSIZE["LEGEND"])
 
-    # Only show legend on the last axis (or can do fig-wide)
-    axs[2].legend(plot_handles, plot_labels, fontsize=FONTSIZE["LEGEND"])
-    plt.suptitle(f"Pretrain Val Loss (Token Matched)", fontsize=FONTSIZE["SUP_TITLE"])
-
-    plt.tight_layout()
-    os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
-    plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/optim_all_size_token.png"), bbox_inches='tight')
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/optim_{size}M_token.png"), bbox_inches='tight')
+        plt.close()
 
 def pretrain_optim_compute(results):
 
-    n_sizes = len(SIZE)
-    fig, axs = plt.subplots(1, n_sizes, figsize=(FIG_WIDTH * n_sizes, 4), sharex=True)
+    os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
 
-    # To handle the case where axs is not iterable if n_sizes == 1
-    if n_sizes == 1:
-        axs = [axs]
+    for size in SIZE:
+        fig, ax = plt.subplots(1, 1, figsize=(FIG_WIDTH, 4))
 
-    plot_handles = []
-    plot_labels = []
+        for optim in OPTIM:
+            run_info = get_run_info(results, size, optim)
+            if run_info is None:
+                print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]}")
+                continue 
 
-    for i, (size, ax) in enumerate(zip(SIZE, axs)):
-        for j, optim in enumerate(OPTIM):
-            
-                run_info = get_run_info(results, size, optim)
-                if run_info is None:
-                    print(f"Skipping OLMo {size}M wwith {OPTIM_MAP[optim]}")
-                    continue 
+            x = [r["multiplier"] for r in run_info["pretrain"].values()]
+            min_multiplier = min(x)
+            rel_flops = [f/min_multiplier for f in x][:-1]
+            y = [r["dclm_val"] for r in run_info["pretrain"].values()]
 
-                x = [r["multiplier"] for r in run_info["pretrain"].values()]
-                min_multiplier = min(x)
-                rel_flops = [f/min_multiplier for f in x][:-1]
-                y = [r["dclm_val"] for r in run_info["pretrain"].values()]
+            if optim == "sam":
+                y = y[:-1]
+            elif optim == "adamw":
+                y = y[1:]
 
-                if optim == "sam":
-                    y = y[:-1]
-                elif optim == "adamw":
-                    y = y[1:]
-
-                handle, = ax.plot(
-                    rel_flops, y,
-                    marker="o",
-                    label=OPTIM_MAP[optim],
-                    color=COLOR_MAP[optim]
-                )
-
-                if i == 0:
-                    plot_handles.append(handle)
-                    plot_labels.append(f"{OPTIM_MAP[optim]}")
-            
+            ax.plot(
+                rel_flops, y,
+                marker="o",
+                label=OPTIM_MAP[optim],
+                color=COLOR_MAP[optim]
+            )
 
         ax.set_xlabel("Relative FLOPs", fontsize=FONTSIZE["AXIS"])
-        if i == 0:
-            ax.set_ylabel("DCLM Val Loss", fontsize=FONTSIZE["AXIS"])
+        ax.set_ylabel("Pretrain Loss", fontsize=FONTSIZE["AXIS"])
         ax.set_xscale('log')
-        ax.set_title(f"OLMo-{size}M", fontsize=FONTSIZE["TITLE"])
+        # ax.set_title(f"{size}M", fontsize=FONTSIZE["TITLE"])
         ax.grid(True)
         ax.tick_params(axis='x', labelsize=FONTSIZE["TICKS"])
         ax.tick_params(axis='y', labelsize=FONTSIZE["TICKS"])
+        ax.legend(fontsize=FONTSIZE["LEGEND"])
 
-    # Only show legend on the last axis (or can do fig-wide)
-    axs[2].legend(plot_handles, plot_labels, fontsize=FONTSIZE["LEGEND"])
-    plt.suptitle(f"Pretrain Val Loss (Compute Matched)", fontsize=FONTSIZE["SUP_TITLE"])
-
-    plt.tight_layout()
-    os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
-    plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/optim_all_size_compute.png"), bbox_inches='tight')
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/optim_{size}M_compute.png"), bbox_inches='tight')
+        plt.close()
 
 
 
 def pretrain_lrs(results, anneal_match="token"):
 
-    n_sizes = len(SIZE)
-    fig, axs = plt.subplots(1, n_sizes, figsize=(FIG_WIDTH * n_sizes, 4), sharex=True)
+    os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
     optim = "adamw"
 
-    # To handle the case where axs is not iterable if n_sizes == 1
-    if n_sizes == 1:
-        axs = [axs]
+    for size in SIZE:
+        fig, ax = plt.subplots(1, 1, figsize=(FIG_WIDTH, 4))
 
-    plot_handles = []
-    plot_labels = []
-
-    for col, (size, ax) in enumerate(zip(SIZE, axs)):
-        for lrs in (LRS):
-
+        for lrs in LRS:
             if lrs == "cosine":
-                    run_info = get_run_info(results, size, optim, anneal=False)
+                run_info = get_run_info(results, size, optim, anneal=False)
             else:
                 anneal_optim = lrs.split("_")[1]
                 if optim == "sam":
@@ -155,39 +114,25 @@ def pretrain_lrs(results, anneal_match="token"):
             x = [r["multiplier"] for r in run_info["pretrain"].values()]
             y = [r["dclm_val"] for r in run_info["pretrain"].values()]
         
-            handle, = ax.plot(
+            ax.plot(
                 x, y,
                 marker="o",
                 label=LRS_MAP[lrs],
                 color=COLOR_MAP[lrs]
-            )
-
-            if col == 1:
-                plot_handles.append(handle)
-                plot_labels.append(f"{LRS_MAP[lrs]}")
-            
+            )            
 
         ax.set_xlabel("Tokens / Param", fontsize=FONTSIZE["AXIS"])
-        if col == 0:
-            ax.set_ylabel("DCLM Val Loss", fontsize=FONTSIZE["AXIS"])
+        ax.set_ylabel("Pretrain Loss", fontsize=FONTSIZE["AXIS"])
         ax.set_xscale('log')
-        ax.set_title(f"OLMo-{size}M", fontsize=FONTSIZE["TITLE"])
+        # ax.set_title(f"{size}M", fontsize=FONTSIZE["TITLE"])
         ax.grid(True)
         ax.tick_params(axis='x', labelsize=FONTSIZE["TICKS"])
         ax.tick_params(axis='y', labelsize=FONTSIZE["TICKS"])
+        ax.legend(fontsize=FONTSIZE["LEGEND"])
 
-    # Only show legend on the last axis (or can do fig-wide)
-    axs[2].legend(plot_handles, plot_labels, fontsize=FONTSIZE["LEGEND"])
-    plt.suptitle(f"Pretrain Val Loss across Learning Rate Schedulers ({anneal_match.capitalize()} Matched)", fontsize=FONTSIZE["SUP_TITLE"])
-
-    plt.tight_layout()
-    os.makedirs(os.path.join(RESULTS_DIR, "plots/pretrain"), exist_ok=True)
-    plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/lrs_all_size_{anneal_match}.png"), bbox_inches='tight')
-    plt.close()
-
-
-
-
+        plt.tight_layout()
+        plt.savefig(os.path.join(RESULTS_DIR, f"plots/pretrain/lrs_{size}M_{anneal_match}.png"), bbox_inches='tight')
+        plt.close()
 
 
 def main(args):
