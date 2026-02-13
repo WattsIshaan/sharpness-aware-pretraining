@@ -22,6 +22,7 @@ __all__ = [
     "SGD",
     "SAM",
     "Muon",
+    "MuonxAdamW",
     "Scheduler",
     "CosWithWarmup",
     "LinearWithWarmup",
@@ -113,14 +114,14 @@ class Optimizer(OptimizerBase):
                     if x is not None and x.numel() > 0:
                         if collect_param_metrics:
                             x_abs = x.abs()
-                            per_param_min_metrics.append(x_abs.min().unsqueeze(0).to(dtype=torch.float32))
-                            per_param_max_metrics.append(x_abs.max().unsqueeze(0).to(dtype=torch.float32))
-                            per_param_sum_metrics.append(x.sum().unsqueeze(0).to(dtype=torch.float32))
+                            per_param_min_metrics.append(x_abs.min().unsqueeze(0).to(device=device, dtype=torch.float32))
+                            per_param_max_metrics.append(x_abs.max().unsqueeze(0).to(device=device, dtype=torch.float32))
+                            per_param_sum_metrics.append(x.sum().unsqueeze(0).to(device=device, dtype=torch.float32))
                             per_param_numel_metrics.append(
                                 torch.tensor([x.numel()], device=device, dtype=torch.float32)
                             )
                         per_param_norm_metrics.append(
-                            torch.linalg.vector_norm(x, 2.0, dtype=torch.float32).unsqueeze(0)
+                            torch.linalg.vector_norm(x, 2.0, dtype=torch.float32).unsqueeze(0).to(device)
                         )
                     else:
                         if collect_param_metrics:
@@ -935,20 +936,33 @@ class Muon(Optimizer):
         """
         https://github.com/KellerJordan/Muon/blob/master/muon.py#L72
         """
+        loss = None
         if closure is not None:
             with torch.enable_grad():
-                closure()
+                loss = closure()
 
         param_names = []
         step_size_norms = []
         step_size_maxs = []
+        
+        # Log hyperparameters on rank 0 only
+        is_rank_zero = not is_distributed() or dist.get_rank() == 0
 
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             
             lr = group["lr"]
             momentum = group["momentum"]
             weight_decay = group["weight_decay"]
             params = group["params"]
+            
+            if is_rank_zero:
+                log.info(f"[Muon Step] Group {group_idx} Hyperparameters:")
+                log.info(f"  Learning Rate: {lr}")
+                log.info(f"  Momentum: {momentum}")
+                log.info(f"  Weight Decay: {weight_decay}")
+                if loss is not None:
+                    log.info(f"  Loss: {loss.item()}")
+                log.info(f"  Number of params: {len(params)}")
             #can only use muon on weight matrices where ndim >= 2, use adam on other params
             params_pad = params + [torch.empty_like(params[-1])] * (
                 dist.get_world_size() - len(params) % dist.get_world_size()
@@ -966,7 +980,31 @@ class Muon(Optimizer):
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
+                    
+                    # Log detailed statistics for first few parameters on rank 0
+                    if is_rank_zero and base_i < 3:  # Log first 3 params per group
+                        momentum_buffer = state["momentum_buffer"]
+                        log.info(f"  Parameter: {name if name is not None else f'param_{base_i}'}")
+                        log.info(f"    Param shape: {p.shape}")
+                        log.info(f"    Param norm: {p.norm().item():.6f}")
+                        log.info(f"    Param mean: {p.mean().item():.6f}")
+                        log.info(f"    Param std: {p.std().item():.6f}")
+                        if p.grad is not None:
+                            log.info(f"    Grad norm: {p.grad.norm().item():.6f}")
+                            log.info(f"    Grad mean: {p.grad.mean().item():.6f}")
+                            log.info(f"    Grad std: {p.grad.std().item():.6f}")
+                        log.info(f"    Momentum buffer norm: {momentum_buffer.norm().item():.6f}")
+                        log.info(f"    Momentum buffer mean: {momentum_buffer.mean().item():.6f}")
+                        log.info(f"    Momentum buffer std: {momentum_buffer.std().item():.6f}")
+                    
                     update = self._muon_update(p.grad, state["momentum_buffer"], beta=momentum)
+                    
+                    # Log update statistics on rank 0
+                    if is_rank_zero and base_i < 3:  # Log first 3 params per group
+                        log.info(f"    Update norm: {update.norm().item():.6f}")
+                        log.info(f"    Update mean: {update.mean().item():.6f}")
+                        log.info(f"    Update std: {update.std().item():.6f}")
+                        log.info(f"    Effective step size: {(lr * update.norm()).item():.6f}")
 
                     # Perform step weight decay.
                     if self._selective_updates:
@@ -988,6 +1026,21 @@ class Muon(Optimizer):
                 dist.all_gather(
                     params_pad[base_i : base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()]
                 )
+        
+        # Log summary statistics on rank 0
+        if is_rank_zero and len(step_size_norms) > 0:
+            avg_step_norm = torch.stack(step_size_norms).mean().item()
+            max_step_norm = torch.stack(step_size_norms).max().item()
+            avg_step_max = torch.stack(step_size_maxs).mean().item()
+            max_step_max = torch.stack(step_size_maxs).max().item()
+            
+            log.info(f"[Muon Step Summary]")
+            log.info(f"  Average step norm: {avg_step_norm:.6f}")
+            log.info(f"  Max step norm: {max_step_norm:.6f}")
+            log.info(f"  Average step max: {avg_step_max:.6f}")
+            log.info(f"  Max step max: {max_step_max:.6f}")
+            log.info(f"  Total parameters updated: {len(step_size_norms)}")
+        
         self.base_optimizer.step(closure=closure)
 
         self._step_size_param_names = param_names
@@ -1032,6 +1085,406 @@ class Muon(Optimizer):
             self._step_size_norms = None
             self._step_size_maxs = None
             return metrics
+
+
+class MuonxAdamW(Optimizer):
+    """
+    Hybrid optimizer that uses PyTorch's native Muon for 2D+ parameters 
+    and AdamW for other parameters (embeddings, norms, biases, 1D params).
+    
+    This is a simple wrapper that delegates to torch.optim.Muon and torch.optim.AdamW.
+    """
+    
+    def __init__(
+        self,
+        muon_params,
+        adamw_params,
+        muon_lr: float = 0.02,
+        adamw_lr: float = 2e-3,
+        muon_momentum: float = 0.95,
+        muon_nesterov: bool = True,
+        muon_ns_coefficients: Tuple[float, float, float] = (3.4445, -4.775, 2.0315),
+        muon_eps: float = 1e-7,
+        muon_ns_steps: int = 5,
+        muon_adjust_lr_fn: Optional[str] = None,
+        adamw_betas: Tuple[float, float] = (0.9, 0.95),
+        adamw_eps: float = 1e-8,
+        weight_decay: float = 0.0,
+        muon_weight_decay: Optional[float] = None,
+        record_update_metrics: bool = False,
+        selective_updates: bool = False,
+    ):
+        """
+        Args:
+            muon_params: Parameter groups for Muon (typically 2D+ weight matrices).
+                         Should be a list of dicts with 'params' and 'param_names' keys.
+            adamw_params: Parameter groups for AdamW (embeddings, norms, biases, 1D).
+                          Should be a list of dicts with 'params' and 'param_names' keys.
+            muon_lr: Learning rate for Muon optimizer
+            adamw_lr: Learning rate for AdamW optimizer
+            muon_momentum: Momentum for Muon
+            muon_nesterov: Whether to use Nesterov momentum for Muon
+            muon_ns_coefficients: Newton-Schulz coefficients for Muon
+            muon_eps: Epsilon for numerical stability in Muon
+            muon_ns_steps: Number of Newton-Schulz steps for Muon
+            muon_adjust_lr_fn: Learning rate adjustment function for Muon ('original', 'match_rms_adamw', or None)
+            adamw_betas: Betas for AdamW
+            adamw_eps: Epsilon for AdamW
+            weight_decay: Weight decay for AdamW optimizer
+            muon_weight_decay: Weight decay for Muon optimizer (if None, uses weight_decay)
+            record_update_metrics: Whether to record update metrics
+            selective_updates: Whether to use selective updates
+        """
+        # Use muon_weight_decay if specified, otherwise fall back to weight_decay
+        if muon_weight_decay is None:
+            muon_weight_decay = weight_decay
+        
+        # CRITICAL: Verify no parameter overlap between optimizers
+        muon_param_list = [p for group in muon_params for p in group['params']]
+        adamw_param_list = [p for group in adamw_params for p in group['params']]
+        muon_param_ids = set(id(p) for p in muon_param_list)
+        adamw_param_ids = set(id(p) for p in adamw_param_list)
+        overlap = muon_param_ids & adamw_param_ids
+        if overlap:
+            raise ValueError(
+                f"Parameter overlap detected between Muon and AdamW optimizers! "
+                f"{len(overlap)} parameters are in both optimizer param lists. "
+                f"Each parameter must be assigned to exactly one optimizer."
+            )
+        
+        # Set hyperparameters directly on param groups (same pattern as Muon optimizer in this file)
+        for group in muon_params:
+            group["lr"] = muon_lr
+            group["momentum"] = muon_momentum
+            group["weight_decay"] = muon_weight_decay
+            group["nesterov"] = muon_nesterov
+            group["ns_coefficients"] = muon_ns_coefficients
+            group["eps"] = muon_eps
+            group["ns_steps"] = muon_ns_steps
+            group["adjust_lr_fn"] = muon_adjust_lr_fn
+            group["optimizer_type"] = "muon"
+            group["use_muon"] = True
+        
+        for group in adamw_params:
+            group["lr"] = adamw_lr
+            group["betas"] = adamw_betas
+            group["eps"] = adamw_eps
+            group["weight_decay"] = weight_decay
+            group["optimizer_type"] = "adamw"
+            group["use_muon"] = False
+        
+        # Combine param groups for base class
+        all_param_groups = muon_params + adamw_params
+        defaults = dict(lr=muon_lr, weight_decay=weight_decay)
+        super().__init__(all_param_groups, defaults)
+        
+        # Create separate param groups for sub-optimizers (avoid conflicts with base optimizer)
+        muon_params_clean = [{'params': g['params']} for g in muon_params]
+        adamw_params_clean = [{'params': g['params']} for g in adamw_params]
+        
+        # Create sub-optimizers
+        self.muon_optimizer = torch.optim.Muon(
+            muon_params_clean,
+            lr=muon_lr,
+            momentum=muon_momentum,
+            weight_decay=muon_weight_decay,
+            nesterov=muon_nesterov,
+            ns_coefficients=muon_ns_coefficients,
+            eps=muon_eps,
+            ns_steps=muon_ns_steps,
+            adjust_lr_fn=muon_adjust_lr_fn,
+        )
+        
+        self.adamw_optimizer = torch.optim.AdamW(
+            adamw_params_clean,
+            lr=adamw_lr,
+            betas=adamw_betas,
+            eps=adamw_eps,
+            weight_decay=weight_decay,
+        )
+        
+        self._record_update_metrics = record_update_metrics
+        self._collecting_metrics = False
+        self._selective_updates = selective_updates
+        
+        # For metrics tracking
+        self._step_size_param_names: Optional[List[str]] = None
+        self._step_size_norms: Optional[List[torch.Tensor]] = None
+        self._step_size_maxs: Optional[List[torch.Tensor]] = None
+        
+        log.info(f"MuonxAdamW optimizer initialized:")
+        log.info(f"  Muon params: {sum(p.numel() for p in muon_param_list)}")
+        log.info(f"    lr={muon_lr}, momentum={muon_momentum}, weight_decay={muon_weight_decay}")
+        log.info(f"    nesterov={muon_nesterov}, eps={muon_eps}, ns_steps={muon_ns_steps}")
+        if muon_adjust_lr_fn:
+            log.info(f"    adjust_lr_fn={muon_adjust_lr_fn}")
+        log.info(f"  AdamW params: {sum(p.numel() for p in adamw_param_list)}")
+        log.info(f"    lr={adamw_lr}, betas={adamw_betas}, eps={adamw_eps}, weight_decay={weight_decay}")
+
+    def _sync_sub_optimizer_hparams(self) -> None:
+        """
+        Keep sub-optimizer hyperparameters in sync with wrapper param groups.
+        Scheduler updates are applied to wrapper groups in train loop, so we mirror
+        the relevant fields before stepping sub-optimizers.
+        """
+        muon_group_idx = 0
+        adamw_group_idx = 0
+        for group in self.param_groups:
+            if group.get("optimizer_type") == "muon":
+                sub_group = self.muon_optimizer.param_groups[muon_group_idx]
+                muon_group_idx += 1
+                # Sync all Muon hyperparameters that might be updated by scheduler
+                for key in ("lr", "momentum", "weight_decay", "nesterov", "ns_coefficients", "eps", "ns_steps", "adjust_lr_fn"):
+                    if key in group:
+                        sub_group[key] = group[key]
+            else:
+                sub_group = self.adamw_optimizer.param_groups[adamw_group_idx]
+                adamw_group_idx += 1
+                for key in ("lr", "betas", "eps", "weight_decay"):
+                    if key in group:
+                        sub_group[key] = group[key]
+
+    def _log_step_hyperparams(self, loss: Optional[torch.Tensor]) -> None:
+        """Log per-group hyperparameters at each step on rank 0."""
+        is_rank_zero = not is_distributed() or dist.get_rank() == 0
+        if not is_rank_zero:
+            return
+
+        log.info("[MuonxAdamW Step] Hyperparameters:")
+        if loss is not None:
+            log.info(f"  Loss: {loss.item()}")
+
+        for group_idx, group in enumerate(self.param_groups):
+            optimizer_type = group.get("optimizer_type", "unknown")
+            lr = group.get("lr")
+            weight_decay = group.get("weight_decay")
+            num_params = len(group.get("params", []))
+            if optimizer_type == "muon":
+                momentum = group.get("momentum")
+                log.info(
+                    f"  Group {group_idx} [muon]: lr={lr}, momentum={momentum}, "
+                    f"weight_decay={weight_decay}, num_params={num_params}"
+                )
+            else:
+                betas = group.get("betas")
+                eps = group.get("eps")
+                log.info(
+                    f"  Group {group_idx} [adamw]: lr={lr}, betas={betas}, eps={eps}, "
+                    f"weight_decay={weight_decay}, num_params={num_params}"
+                )
+    
+    @property
+    def state(self):
+        """
+        Combine state from both optimizers.
+        This is needed for compatibility with OLMo's clip_grads_and_collect_metrics.
+        
+        IMPORTANT: States are completely separate - each parameter belongs to exactly
+        one optimizer (verified at initialization). Muon params have momentum_buffer,
+        AdamW params have exp_avg/exp_avg_sq. No mixing occurs.
+        """
+        # Create a combined state dict that includes both optimizers
+        # Since params are disjoint (verified in __init__), no key collisions occur
+        combined_state = {}
+        combined_state.update(self.muon_optimizer.state)
+        combined_state.update(self.adamw_optimizer.state)
+        return combined_state
+    
+    @state.setter
+    def state(self, value):
+        """
+        Setter for state - required by PyTorch's Optimizer base class.
+        We store it internally but the getter will combine from sub-optimizers.
+        """
+        self._state_dict = value
+    
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        """Perform optimization step for both optimizers."""
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        # Wrapper groups receive scheduler updates; propagate to sub-optimizers.
+        self._sync_sub_optimizer_hparams()
+        self._log_step_hyperparams(loss)
+
+        # Step both optimizers
+        self.muon_optimizer.step()
+        self.adamw_optimizer.step()
+        
+        return loss
+    
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        """Zero gradients for both optimizers."""
+        self.muon_optimizer.zero_grad(set_to_none=set_to_none)
+        self.adamw_optimizer.zero_grad(set_to_none=set_to_none)
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """
+        Return combined state dict from both optimizers.
+        Format is compatible with OLMo's checkpoint saving.
+        """
+        # Get base state dict structure from parent
+        base_state_dict = {
+            'state': {},
+            'param_groups': self.param_groups,
+        }
+        
+        # Combine states from both optimizers
+        # Map param ids to unified state
+        muon_state = self.muon_optimizer.state_dict()['state']
+        adamw_state = self.adamw_optimizer.state_dict()['state']
+        
+        # Create unified state dict
+        # PyTorch uses sequential IDs for params, we need to maintain that
+        param_id = 0
+        for group in self.param_groups:
+            for param in group['params']:
+                # Check if this param is in muon or adamw optimizer
+                if param in self.muon_optimizer.state:
+                    # Find the original id in muon optimizer
+                    for muon_id, muon_param in enumerate(
+                        [p for g in self.muon_optimizer.param_groups for p in g['params']]
+                    ):
+                        if param is muon_param and muon_id in muon_state:
+                            base_state_dict['state'][param_id] = muon_state[muon_id]
+                            break
+                elif param in self.adamw_optimizer.state:
+                    # Find the original id in adamw optimizer
+                    for adamw_id, adamw_param in enumerate(
+                        [p for g in self.adamw_optimizer.param_groups for p in g['params']]
+                    ):
+                        if param is adamw_param and adamw_id in adamw_state:
+                            base_state_dict['state'][param_id] = adamw_state[adamw_id]
+                            break
+                param_id += 1
+        
+        return base_state_dict
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """
+        Load state dict for both optimizers.
+        Handles both the old format (with 'muon' and 'adamw' keys) 
+        and the standard PyTorch format.
+        """
+        # Check if this is the old format or standard format
+        if 'muon' in state_dict and 'adamw' in state_dict:
+            # Old format - direct loading
+            self.muon_optimizer.load_state_dict(state_dict['muon'])
+            self.adamw_optimizer.load_state_dict(state_dict['adamw'])
+            if 'metrics' in state_dict:
+                metrics = state_dict['metrics']
+                self._step_size_param_names = metrics.get('step_size_param_names')
+                self._step_size_norms = metrics.get('step_size_norms')
+                self._step_size_maxs = metrics.get('step_size_maxs')
+        else:
+            # Standard PyTorch format - need to split state between optimizers
+            # First, update our param_groups
+            self.param_groups = state_dict['param_groups']
+            
+            # Create separate state dicts for each optimizer
+            muon_state_dict = {'state': {}, 'param_groups': []}
+            adamw_state_dict = {'state': {}, 'param_groups': []}
+            
+            muon_param_id = 0
+            adamw_param_id = 0
+            
+            for group_id, group in enumerate(self.param_groups):
+                is_muon = group.get('optimizer_type') == 'muon'
+                
+                if is_muon:
+                    # Build param group for muon - copy all keys except OLMo-specific ones
+                    muon_group = {'params': list(range(muon_param_id, muon_param_id + len(group['params'])))}
+                    for key, value in group.items():
+                        if key not in ['params', 'optimizer_type', 'param_names']:
+                            muon_group[key] = value
+                    muon_state_dict['param_groups'].append(muon_group)
+                    
+                    # Copy state for these params
+                    param_id_start = sum(len(g['params']) for g in self.param_groups[:group_id])
+                    for i, param in enumerate(group['params']):
+                        state_id = param_id_start + i
+                        if state_id in state_dict['state']:
+                            muon_state_dict['state'][muon_param_id] = state_dict['state'][state_id]
+                            muon_param_id += 1
+                else:
+                    # Build param group for adamw - copy all keys except OLMo-specific ones
+                    adamw_group = {'params': list(range(adamw_param_id, adamw_param_id + len(group['params'])))}
+                    for key, value in group.items():
+                        if key not in ['params', 'optimizer_type', 'param_names']:
+                            adamw_group[key] = value
+                    adamw_state_dict['param_groups'].append(adamw_group)
+                    
+                    # Copy state for these params
+                    param_id_start = sum(len(g['params']) for g in self.param_groups[:group_id])
+                    for i, param in enumerate(group['params']):
+                        state_id = param_id_start + i
+                        if state_id in state_dict['state']:
+                            adamw_state_dict['state'][adamw_param_id] = state_dict['state'][state_id]
+                            adamw_param_id += 1
+            
+            # Load into sub-optimizers
+            if muon_state_dict['param_groups']:
+                self.muon_optimizer.load_state_dict(muon_state_dict)
+                # Verify all required fields are present in Muon param groups
+                for group in self.muon_optimizer.param_groups:
+                    if 'lr' not in group:
+                        raise ValueError(f"Muon param group missing 'lr' after load_state_dict: {group.keys()}")
+            if adamw_state_dict['param_groups']:
+                self.adamw_optimizer.load_state_dict(adamw_state_dict)
+                # Verify all required fields are present in AdamW param groups
+                for group in self.adamw_optimizer.param_groups:
+                    if 'lr' not in group:
+                        raise ValueError(f"AdamW param group missing 'lr' after load_state_dict: {group.keys()}")
+
+        # Ensure runtime hyperparameters are consistent after loading.
+        self._sync_sub_optimizer_hparams()
+    
+    def get_state_for_param(self, param: nn.Parameter) -> Dict[str, Optional[torch.Tensor]]:
+        """
+        Get optimizer state for a specific parameter.
+        
+        Returns different state fields depending on which optimizer owns the param:
+        - Muon params: {'momentum': momentum_buffer}
+        - AdamW params: {'exp_avg': exp_avg, 'exp_avg_sq': exp_avg_sq}
+        
+        Each param belongs to exactly one optimizer (ensured at initialization).
+        """
+        # Check which optimizer has this param (they're mutually exclusive)
+        if param in self.muon_optimizer.state:
+            state = self.muon_optimizer.state[param]
+            return {'momentum': state.get('momentum_buffer')}
+        elif param in self.adamw_optimizer.state:
+            state = self.adamw_optimizer.state[param]
+            return {
+                'exp_avg': state.get('exp_avg'),
+                'exp_avg_sq': state.get('exp_avg_sq'),
+            }
+        return {}
+    
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        """Return post-step metrics (delegated to parent implementation)."""
+        if not (self._record_update_metrics and self._collecting_metrics):
+            return {}
+        
+        # Collect metrics from both optimizers if they support it
+        metrics = {}
+        
+        # Get metrics from Muon optimizer if available
+        if hasattr(self.muon_optimizer, 'get_post_step_metrics'):
+            muon_metrics = self.muon_optimizer.get_post_step_metrics(module, process_group)
+            metrics.update({f"muon/{k}": v for k, v in muon_metrics.items()})
+        
+        # Get metrics from AdamW optimizer if available  
+        if hasattr(self.adamw_optimizer, 'get_post_step_metrics'):
+            adamw_metrics = self.adamw_optimizer.get_post_step_metrics(module, process_group)
+            metrics.update({f"adamw/{k}": v for k, v in adamw_metrics.items()})
+        
+        return metrics
 
 
 class MuonKimi(Optimizer):
@@ -1540,30 +1993,38 @@ def get_param_groups_muon(cfg: TrainConfig, model: nn.Module) -> List[Dict[str, 
             if _should_print():
                 print(fpn)
 
-            if fpn == 'module.transformer.ff_out.weight':
-                decay.add(fpn)
-                if _should_print():
-                    print(f'{fpn} added to non muon decay')
-            elif pn.endswith("bias"):
+            # if fpn == 'module.transformer.ff_out.weight':
+            #     decay.add(fpn)
+            #     if _should_print():
+            #         print(f'{fpn}: Adam + decay')
+            if pn.endswith("bias"):
                 if cfg.optimizer.decay_norm_and_bias:
                     decay.add(fpn)
+                    print(f'{fpn}: Adam + decay')
                 else:
                     no_decay.add(fpn)
+                    print(f'{fpn}: Adam + no decay')
             elif pn.endswith("weight") and isinstance(m, nn.Linear):
                 if p.ndim >= 2:
                     decay_muon.add(fpn)
+                    print(f'{fpn}: Muon + decay')
                 else:
                     decay.add(fpn)
+                    print(f'{fpn}: Adamw + decay')
             elif pn.endswith("weight") and isinstance(m, (LayerNormBase, nn.LayerNorm)):
                 if cfg.optimizer.decay_norm_and_bias:
                     decay.add(fpn)
+                    print(f'{fpn}: Muon + decay')
                 else:
                     no_decay.add(fpn)
+                    print(f'{fpn}: Adamw + no decay')
             elif pn.endswith("weight") and isinstance(m, nn.Embedding):
                 if cfg.optimizer.decay_embeddings:
                     decay.add(fpn)
+                    print(f'{fpn}: Adamw + decay')
                 else:
                     no_decay.add(fpn)
+                    print(f'{fpn}: Adamw + no decay')
 
     # Validate that we've considered every parameter
     inter_params = (decay_muon & no_decay_muon) | (decay & no_decay) | \
@@ -1754,6 +2215,24 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             lr=cfg.optimizer.muon_learning_rate,
             weight_decay=cfg.optimizer.muon_weight_decay,
             momentum=cfg.optimizer.muon_momentum,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
+        )
+    elif cfg.optimizer.name == OptimizerType.muonxadamw:
+        # Get param groups separated into Muon (2D+) and AdamW (norms/biases/1D/embeddings)
+        adamw_param_groups, muon_param_groups = get_param_groups_muon(cfg, model)
+        log.info(f"MuonxAdamW: {len(muon_param_groups)} Muon groups, {len(adamw_param_groups)} AdamW groups")
+        
+        return MuonxAdamW(
+            muon_params=muon_param_groups,
+            adamw_params=adamw_param_groups,
+            muon_lr=cfg.optimizer.muon_learning_rate,
+            adamw_lr=cfg.optimizer.learning_rate,
+            muon_momentum=cfg.optimizer.muon_momentum,
+            adamw_betas=cfg.optimizer.betas,
+            adamw_eps=cfg.optimizer.eps,
+            weight_decay=cfg.optimizer.weight_decay,
+            muon_weight_decay=cfg.optimizer.muon_weight_decay,
             record_update_metrics=cfg.optimizer.record_update_metrics,
             selective_updates=cfg.optimizer.selective_updates,
         )

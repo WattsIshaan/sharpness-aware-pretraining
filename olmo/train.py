@@ -420,24 +420,23 @@ class Trainer:
             self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
         )
 
-        if(isinstance(self.optim, (Muon, MuonKimi))):
-            new_muon_learning_rate = new_learning_rate = self.scheduler.get_lr(
-            self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
+        has_muon_groups = any(group.get("use_muon", False) for group in self.optim.param_groups)
+        new_muon_learning_rate = (
+            self.scheduler.get_lr(self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max)
+            if has_muon_groups
+            else new_learning_rate
         )
-            for group in self.optim.param_groups:
-                if(group["use_muon"]):
-                    group["lr"] = new_muon_learning_rate
-                    group["initial_lr"] = self.cfg.optimizer.muon_learning_rate
-                else:
-                    group["lr"] = new_learning_rate
-                    group["initial_lr"] = self.cfg.optimizer.learning_rate
+
+        for group in self.optim.param_groups:
+            use_muon = group.get("use_muon", False)
+            group["lr"] = new_muon_learning_rate if use_muon else new_learning_rate
+            group["initial_lr"] = (
+                self.cfg.optimizer.muon_learning_rate if use_muon else self.cfg.optimizer.learning_rate
+            )
             if "weight_decay" in group and group["weight_decay"] > 0.0:
-                group["weight_decay"] = self.cfg.optimizer.weight_decay
-        else:
-            for group in self.optim.param_groups:
-                group["lr"] = new_learning_rate
-                group["initial_lr"] = self.cfg.optimizer.learning_rate
-                if "weight_decay" in group and group["weight_decay"] > 0.0:
+                if use_muon and getattr(self.cfg.optimizer, "muon_weight_decay", None) is not None:
+                    group["weight_decay"] = self.cfg.optimizer.muon_weight_decay
+                else:
                     group["weight_decay"] = self.cfg.optimizer.weight_decay
 
         # RNG states.
@@ -918,10 +917,10 @@ class Trainer:
             # TODO (epwalsh): if we want to enable different LRs or gradient clipping settings per group
             # we should pass `group["initial_lr"]` or `group["initial_max_grad_norm"]` here instead of
             # the corresponding values from `self.cfg`.
-            if (isinstance(self.optim, (Muon, MuonKimi))):
+            if group.get("use_muon", False):
                 group["lr"] = self.scheduler.get_lr(
-                self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
-            )
+                    self.cfg.optimizer.muon_learning_rate, self.scheduler_current, self.scheduler_max
+                )
             else:
                 group["lr"] = self.scheduler.get_lr(
                     self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
