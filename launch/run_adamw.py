@@ -1,7 +1,7 @@
 """Muon (SGD-only) pretraining and evaluation runner."""
 
 # 1) Load project configuration as early as possible
-from experiments import Project
+from experiments import Project # type: ignore
 Project.init('60m-experiments')
 
 # 2) Rest of imports
@@ -17,11 +17,18 @@ pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
             'optimizer': ['adamw'],
-            'pt_lr': [-1],
-            'train_tokens': [12, 24, 48, 96, 192], #[], #, 
-            # 'train_tokens': [4, 8, 16, 32, 64],
-            # 'train_tokens': [4, 8, 16, 32, 64],
-            # 'train_tokens': [65],
+            # 'pt_lr': [1e-4, 6e-4],
+            # 'pt_lr': [6e-4],
+            'pt_lr': [3e-4],
+            # 'pt_lr': [-1],
+            # 'train_tokens': [60, 120],
+            # 'train_tokens': [12, 24, 48, 96, 192],
+            # "train_tokens": [25],
+            # "train_tokens": [31],
+            'train_tokens': [192],
+            # 'train_tokens': [121],
+            # 'train_tokens': [61],
+            # 'train_tokens': [15, 30, 60, 120],
             'weight_decay': [0.1],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
@@ -35,30 +42,30 @@ pretrained_models = ArtifactSet.from_product(
 model_evaluations = pretrained_models.map(lambda model: ModelEvaluation(model=model))
 
 # Convert to HF Models
-hf_models = pretrained_models.map(lambda model: HFModel(pretrained_model=model))
-hf_model_evaluations = hf_models.map(lambda model: ModelEvaluation(model=model, hf_model=True))
+# hf_models = pretrained_models.map(lambda model: HFModel(pretrained_model=model))
+# hf_model_evaluations = hf_models.map(lambda model: ModelEvaluation(model=model, hf_model=True))
 
-# Quantize HF Models
-quantized_models_evaluations = build_quantized_model_evaluations(hf_models)
+# # Quantize HF Models
+# quantized_models_evaluations = build_quantized_model_evaluations(hf_models)
 
-# Perturbed pretrained models and evaluations
-perturbed_models = build_perturbed_models(pretrained_models)
-perturbed_model_evaluations = build_perturbed_model_evaluations(perturbed_models)
+# # Perturbed pretrained models and evaluations
+# perturbed_models = build_perturbed_models(pretrained_models)
+# perturbed_model_evaluations = build_perturbed_model_evaluations(perturbed_models)
 
-# Anneal Pretrained models
-annealed_models = build_annealed_models(pretrained_models)
-annealed_model_evaluations = annealed_models.map(lambda model: ModelEvaluation(model=model))
+# # # Anneal Pretrained models
+# annealed_models = build_annealed_models(pretrained_models)
+# annealed_model_evaluations = annealed_models.map(lambda model: ModelEvaluation(model=model))
 
-# Perturbed annealed models and evaluations
-perturbed_annealed_models = build_perturbed_models(annealed_models)
-perturbed_annealed_evaluations = build_perturbed_model_evaluations(perturbed_annealed_models)
+# # # # Perturbed annealed models and evaluations
+# perturbed_annealed_models = build_perturbed_models(annealed_models)
+# perturbed_annealed_evaluations = build_perturbed_model_evaluations(perturbed_annealed_models)
 
-# Convert to HF Models
-annealed_hf_models = annealed_models.map(lambda model: HFModel(pretrained_model=model))
-annealed_hf_model_evaluations = annealed_hf_models.map(lambda model: ModelEvaluation(model=model, hf_model=True))
+# # Convert to HF Models
+# annealed_hf_models = annealed_models.map(lambda model: HFModel(pretrained_model=model))
+# annealed_hf_model_evaluations = annealed_hf_models.map(lambda model: ModelEvaluation(model=model, hf_model=True))
 
-# Quantize HF Models
-annealed_quantized_models_evaluations = build_quantized_model_evaluations(annealed_hf_models)
+# # Quantize HF Models
+# annealed_quantized_models_evaluations = build_quantized_model_evaluations(annealed_hf_models)
 
 
 # CPT stages for SGD models
@@ -66,8 +73,8 @@ cpt_models = build_cpt_models(pretrained_models)
 cpt_model_evaluations = build_cpt_model_evaluations(cpt_models)
 
 # CPT stages for SGD models
-annealed_cpt_models = build_cpt_models(annealed_models)
-annealed_cpt_model_evaluations = build_cpt_model_evaluations(annealed_cpt_models)
+# annealed_cpt_models = build_cpt_models(annealed_models)
+# annealed_cpt_model_evaluations = build_cpt_model_evaluations(annealed_cpt_models)
 
 
 # Setup command for the executor
@@ -86,31 +93,30 @@ executor = SlurmExecutor(
 executor.stage('pretrain', pretrained_models)
 executor.stage('pretrain_eval', model_evaluations)
 
-executor.stage('hf', hf_models)
-executor.stage('hf_eval', hf_model_evaluations)
+# executor.stage('hf', hf_models)
+# executor.stage('hf_eval', hf_model_evaluations)
 
-executor.stage('quant_eval', quantized_models_evaluations)
+# executor.stage('quant_eval', quantized_models_evaluations)
 
-executor.stage('perturb', perturbed_models)
-executor.stage('perturb_eval', perturbed_model_evaluations)
+# executor.stage('perturb', perturbed_models)
+# executor.stage('perturb_eval', perturbed_model_evaluations)
 
-executor.stage('anneal', annealed_models)
-executor.stage('anneal_eval', annealed_model_evaluations)
+# executor.stage('anneal', annealed_models)
+# executor.stage('anneal_eval', annealed_model_evaluations)
 
-executor.stage('anneal_perturb', perturbed_annealed_models)
-executor.stage('anneal_perturb_eval', perturbed_annealed_evaluations)
-executor.stage('anneal_hf', annealed_hf_models)
-executor.stage('anneal_hf_eval', annealed_hf_model_evaluations)
+# executor.stage('anneal_perturb', perturbed_annealed_models)
+# executor.stage('anneal_perturb_eval', perturbed_annealed_evaluations)
+# executor.stage('anneal_hf', annealed_hf_models)
+# executor.stage('anneal_hf_eval', annealed_hf_model_evaluations)
 
-executor.stage('anneal_quant_eval', annealed_quantized_models_evaluations)
+# executor.stage('anneal_quant_eval', annealed_quantized_models_evaluations)
 
 # Stage CPT and its evaluations
 executor.stage('cpt', cpt_models)
 executor.stage('cpt_eval', cpt_model_evaluations)
-
 # Stage Annealed CPT and its evaluations
-executor.stage('anneal_cpt', annealed_cpt_models)
-executor.stage('anneal_cpt_eval', annealed_cpt_model_evaluations)
+# executor.stage('acpt', annealed_cpt_models)
+# executor.stage('acpt_eval', annealed_cpt_model_evaluations)
 
 
 

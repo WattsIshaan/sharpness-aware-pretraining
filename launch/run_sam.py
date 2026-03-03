@@ -19,7 +19,7 @@ pretrained_models = ArtifactSet.from_product(
         params={
             'optimizer': ['sam'],
             'pt_lr': [-1],
-            'train_tokens': [12, 24, 48, 96, 192], #, 
+            'train_tokens': [192], #, 
             # 'train_tokens': [4, 8, 16, 32, 64],
             # 'train_tokens': [15, 30, 60, 120],
             # 'train_tokens': [120],

@@ -12,7 +12,6 @@ def get_run_info(
     quantized=False, 
     pt_lr: float | str = "adapt",
     anneal=False, 
-    anneal_steps=None, 
     anneal_percent=None, 
     model_type="olmo", 
     anneal_optim="adamw",
@@ -31,10 +30,9 @@ def get_run_info(
         all_runs = [r for r in all_runs if r.get("pretrain_lr") == pt_lr]
 
     if anneal:
-        assert anneal_steps is not None or anneal_percent is not None 
-        all_runs = [r for r in all_runs if r.get("pretrain_lrs") == "wsd" and r.get("anneal_optim") == anneal_optim and r.get("anneal_match") == (anneal_match or "both")]
-        if anneal_steps is not None:
-            all_runs = [r for r in all_runs if r.get("anneal_steps") == anneal_steps]
+        assert anneal_percent is not None
+        all_runs = [r for r in all_runs if r.get("pretrain_lrs") == "wsd" and r.get("anneal_optim") == anneal_optim and (r.get("anneal_match") == anneal_match or r.get("anneal_match") == "both")]
+        
         if anneal_percent is not None:
             all_runs = [r for r in all_runs if r.get("anneal_percent") == anneal_percent]  
     else:
@@ -152,6 +150,7 @@ def get_run_info(
                             "dclm_val": run["dclm_val"],
                             cpt_dataset: run[f"{cpt_dataset}_val"]
                         }
+
 
     return run_info
 

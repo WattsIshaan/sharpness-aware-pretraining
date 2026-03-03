@@ -167,50 +167,80 @@ WARMUP_STEPS = {
 }
 
 ANNEAL_CKPT = {
-    "compute": {
-        20: {
-            4: 15000,
-            8: 25000,
-            16: 50000,
-            32: 100000,
-            64: 205000,
+    5: {
+        "compute": {},
+        "token": {
+            20: {
+                64: 230000,
+            },
+            60: {
+                192: 700000,
+            },
+            150: {
+                120: 435000,
+            }
         },
-        60:{
-            12: 35000,
-            24: 75000,
-            48: 155000,
-            96: 305000,
-            192: 610000,
+    },
+    10: {    
+        "compute": {
+            20: {
+                4: 15000,
+                8: 25000,
+                16: 50000,
+                32: 100000,
+                64: 205000,
+            },
+            60:{
+                12: 35000,
+                24: 75000,
+                48: 155000,
+                96: 305000,
+                192: 610000,
+            },
+            150 : {
+                15: 45000,
+                30: 95000,
+                60: 190000,
+                120: 380000,
+            }
         },
-        150 : {
-            15: 45000,
-            30: 95000,
-            60: 190000,
-            120: 380000,
+        "token": {
+            20: {
+                4: 15000,
+                8: 30000,
+                16: 55000,
+                32: 110000,
+                64: 220000,
+            },
+            60:{
+                12: 40000,
+                24: 85000,
+                48: 165000,
+                96: 335000,
+                192: 670000,
+            },
+            150 : {
+                15: 50000,
+                30: 105000,
+                60: 205000,
+                120: 415000,
+            }
         }
     },
-    "token": {
-        20: {
-            4: 15000,
-            8: 30000,
-            16: 55000,
-            32: 110000,
-            64: 220000,
+    20: {
+        "compute": {},
+        "token": {
+            20: {
+                64: 205000,
+            },
+            60: {
+                192: 610000,
+            },
+            150: {
+                120: 380000,
+            }
         },
-        60:{
-            12: 40000,
-            24: 85000,
-            48: 165000,
-            96: 335000,
-            192: 670000,
-        },
-        150 : {
-            15: 50000,
-            30: 105000,
-            60: 205000,
-            120: 415000,
-        }
-    }
+    },
 }
 
 # Merge pretrain validation sets into CPT dictionaries
@@ -430,7 +460,11 @@ class AnnealedModel(Artifact):
 
     @property
     def pretrain_ckpt_step(self) -> int:
-        return ANNEAL_CKPT[self.anneal_match][int(self.model_size[:-1])][self.pt_token]
+        return ANNEAL_CKPT[self.anneal_percent][self.anneal_match][int(self.model_size[:-1])][self.pt_token]
+
+    @property
+    def train_tokens(self) -> int:
+        return self.pretrained_model.train_tokens
 
     @property
     def checkpoint_relpath(self) -> str:
@@ -464,14 +498,15 @@ class AnnealedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gpus": self.anneal_gpus,
+            "gres": f"gpu:{self.anneal_gpus}",
             "nodes": 1,
             "cpus": max(1, self.anneal_gpus * 2),
             "mem": '64GB',
             "requeue": True,
-            # "partition": 'preempt',
-            "partition": 'general',
-            "time": "2-00:00:00"
+            "partition": 'flame',
+            "qos": 'flame-16gpu-c_qos',
+            "account": 'aditirag',
+            "time": "12-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -642,7 +677,7 @@ class CPTModel(Artifact):
 
     @property
     def exists(self) -> bool:
-        # return False
+        return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
@@ -653,12 +688,15 @@ class CPTModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            'gpus': str(self.cpt_gpus),
-            'nodes': 1,
-            'cpus-per-task': self.cpt_gpus * 2,
-            'mem': '64GB',
-            'requeue': True,
-            'partition': 'preempt'
+            "gres": f"gpu:{self.cpt_gpus}",
+            "nodes": 1,
+            "cpus": max(1, self.cpt_gpus * 2),
+            "mem": '64GB',
+            "requeue": True,
+            "partition": 'flame',
+            "qos": 'flame-16gpu-c_qos',
+            "account": 'aditirag',
+            "time": "12-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -799,13 +837,15 @@ class PerturbedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gpus": 1,
+            "gres": f"gpu:1",
             "nodes": 1,
-            "cpus-per-task": 4,
-            "mem": "64GB",
+            "cpus": 4,
+            "mem": '64GB',
             "requeue": True,
-            "partition": "preempt",
-            "time": "2-00:00:00",
+            "partition": 'flame',
+            "qos": 'flame-16gpu-c_qos',
+            "account": 'aditirag',
+            "time": "12-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -852,6 +892,7 @@ class ModelEvaluation(Artifact):
 
     @property
     def exists(self) -> bool:
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
@@ -861,7 +902,18 @@ class ModelEvaluation(Artifact):
         # return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gpus': 1, 'nodes': 1, 'cpus-per-task': 4, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
+        return {
+            "gres": f"gpu:2",
+            "nodes": 1,
+            "cpus": 4,
+            "mem": '64GB',
+            "requeue": True,
+            "partition": 'flame',
+            "qos": 'flame-16gpu-c_qos',
+            "account": 'aditirag',
+            "time": "12-00:00:00"
+        }
+        # return {'gpus': 1, 'nodes': 1, 'cpus': 4, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
