@@ -1,6 +1,6 @@
-SIZE = [20, 60, 150]
-# CPT_DATASET = ["starcoder", "musicpile", "tulu", 'stackmathqa', "gsm8k"]
-CPT_DATASET = ["starcoder", "gsm8k"]
+SIZE = [60, 150]
+CPT_DATASET = ["starcoder", "musicpile", "tulu", "gsm8k", "siqa", 'stackmathqa'] #"alpaca", 'open-platypus', , 'helpsteer'
+DOWNSTREAM_TASKS = ["winogrande", "mmlu", "sciq", "hellaswag", "copa", "openbook_qa"]
 OPTIM = ['adamw', 'sam']
 RHO = [5e-2]
 VERBOSE = False
@@ -36,6 +36,12 @@ TASKNAME_MAP = {
     "open-platypus_val": "input_ids-open-platypus",
     "stackmathqa_val": "input_ids-stackmathqa",
     "helpsteer_val": "input_ids-helpsteer",
+    "winogrande": "eval/downstream/winogrande_acc",
+    "mmlu": "eval/downstream/mmlu_other_var_len_norm",
+    "sciq": "eval/downstream/sciq_acc",
+    "hellaswag": "eval/downstream/hellaswag_len_norm",
+    "copa": "eval/downstream/copa_acc",
+    "openbook_qa": "eval/downstream/openbook_qa_len_norm",
     # "c4_val": "eval-data_perplexity_v3_small_dolma2-tokenizer_c4_en_val_part-0-00000",
 }
 
@@ -48,7 +54,8 @@ BITS = [4, 8]
 TOKEN_LIST = {
     20: [4, 8, 16, 32, 64],
     60: [12, 24, 48, 96, 192],
-    150: [15, 30, 60, 120]
+    150: [15, 30, 60, 120],
+    1: [4]
 }
 
 PT_LR = {

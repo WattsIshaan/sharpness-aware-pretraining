@@ -141,6 +141,41 @@ def get_300m_base_model_config():
         'init_cutoff_factor': 3,
     }
 
+def get_1b_midtraining_config():
+    return {
+        'd_model': 2048,
+        'n_heads': 16,
+        'n_layers': 16,
+        'mlp_ratio': 8,
+        'weight_tying': False,
+        'alibi': False,
+        'rope': True,
+        'rope_theta': 500000,
+        'flash_attention': True,
+        'attention_dropout': 0.0,
+        'include_bias': False,
+        'block_type': 'sequential',
+        'layer_norm_type': 'rms',
+        'layer_norm_with_affine': True,
+        'layer_norm_eps': 1e-6,
+        'bias_for_layer_norm': False,
+        'attention_layer_norm': True,
+        'attention_layer_norm_with_affine': True,
+        'norm_after': True,
+        'activation_type': 'swiglu',
+        'residual_dropout': 0.0,
+        'embedding_dropout': 0.0,
+        'max_sequence_length': 2048,
+        'vocab_size': 100278,
+        'embedding_size': 100352,   
+        'eos_token_id': 100257,
+        'pad_token_id': 100277,
+        'init_device': 'cuda',
+        'init_fn': 'normal',
+        'init_std': 0.02,
+        'init_cutoff_factor': 3,
+    }
+
 
 def get_train_config(
     run_name,
@@ -158,11 +193,13 @@ def get_train_config(
     scheduler_name='cosine_with_warmup',
     scheduler_t_warmup=5000,
     scheduler_alpha_f=0.1,
+    scheduler_anneal_begin=None,
     optimizer_betas=(0.9, 0.95),
     momentum=0.9,
     sam_rho=0.05,
     sam_base_optimizer='adamw',
     optimizer_eps=1e-8,
+    decay_embeddings=True,
     muon_learning_rate=5e-2, #EDIT
     muon_momentum=0.95,
     muon_weight_decay=0.02,
@@ -184,6 +221,7 @@ def get_train_config(
     wandb_resume='allow',
     run_sync_cmd=None,
     dtype="uint16",
+    distributed_strategy='ddp',
     **overrides
 ):
     """
@@ -206,6 +244,7 @@ def get_train_config(
         scheduler_alpha_f: Final learning rate multiplier
         optimizer_betas: Optimizer beta parameters
         optimizer_eps: Optimizer epsilon
+        decay_embeddings: Whether to apply weight decay to embeddings (False for midtraining)
         global_train_batch_size: Global batch size
         device_train_microbatch_size: Microbatch size for training
         device_eval_batch_size: Batch size for evaluation (defaults to device_train_microbatch_size)
@@ -234,6 +273,8 @@ def get_train_config(
         model_config = get_150m_base_model_config()
     elif model_size == '300m':
         model_config = get_300m_base_model_config()
+    elif model_size == '1b':
+        model_config = get_1b_midtraining_config()
     else:
         raise ValueError("Invalid Model Size")
 
@@ -266,7 +307,7 @@ def get_train_config(
             'weight_decay': weight_decay,
             'eps': optimizer_eps,
             'decay_norm_and_bias': True,
-            'decay_embeddings': True,
+            'decay_embeddings': decay_embeddings,
             'betas': list(optimizer_betas),
             'metrics_log_interval': 10,
             'momentum': momentum,
@@ -282,6 +323,7 @@ def get_train_config(
             't_warmup': scheduler_t_warmup,
             'alpha_f': scheduler_alpha_f,
             'warmup_min_lr': 0,
+            'anneal_begin': scheduler_anneal_begin,
         },
         
         'tokenizer': {
@@ -303,7 +345,7 @@ def get_train_config(
         'device_train_microbatch_size': device_train_microbatch_size,
         
         'precision': 'amp_bf16',
-        'distributed_strategy': 'ddp',
+        'distributed_strategy': distributed_strategy,
         'gen1_gc_interval': 1,
         'max_grad_norm': max_grad_norm,
         'max_grad_norm_ratio': None,
@@ -340,28 +382,38 @@ def get_train_config(
     
     # Add evaluators if eval datasets are provided
     if eval_datasets:
-        config['evaluators'] = [{
-            'label': 'pretrain-perplexity',
-            'data': {
-                'num_workers': 0,
-                'drop_last': True,
-                'datasets': eval_datasets["pretrain"],
-                'generate_attention_mask': True,
-                'memmap_dtype': dtype
-            },
-        }]
-        for k, v in eval_datasets["cpt"].items():
+        config['evaluators'] = []
+        if "pretrain" in eval_datasets:
             config['evaluators'].append({
-            'label': k,
-            'data': {
-                'num_workers': 0,
-                'drop_last': True,
-                'generate_attention_mask': True,
-                'paths': v["data_paths"],
-                'label_mask_paths': v["mask_paths"],
-                'memmap_dtype': dtype
-            },
-        })
+                'label': 'pretrain-perplexity',
+                'data': {
+                    'num_workers': 0,
+                    'drop_last': True,
+                    'datasets': eval_datasets["pretrain"],
+                    'generate_attention_mask': True,
+                    'memmap_dtype': dtype
+                },
+            })
+
+        if "cpt" in eval_datasets:
+            for k, v in eval_datasets["cpt"].items():
+                config['evaluators'].append({
+                    'label': k,
+                    'data': {
+                        'num_workers': 0,
+                        'drop_last': True,
+                        'generate_attention_mask': True,
+                        'paths': v["data_paths"],
+                        'label_mask_paths': v["mask_paths"],
+                        'memmap_dtype': dtype
+                    },
+                })
+        if "downstream" in eval_datasets:
+            for k in eval_datasets["downstream"]:
+                config['evaluators'].append({
+                    'label': k,
+                    'type': 'downstream',
+                })
 
     # Add label mask paths if provided
     if train_data_label_mask_paths:

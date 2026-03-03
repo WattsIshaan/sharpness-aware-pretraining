@@ -1,4 +1,4 @@
-from utils.config_globals import TOKEN_LIST, PT_LR, PERTURBATIONS, VERBOSE, BITS
+from utils.config_globals import TOKEN_LIST, PT_LR, PERTURBATIONS, VERBOSE, BITS, DOWNSTREAM_TASKS
 from utils.plotting_globals import OPTIM_MAP
 
 def get_run_info(
@@ -45,52 +45,72 @@ def get_run_info(
         return None
 
     pretrain_runs = [r for r in all_runs if r.get("run_type") == "pretrain"]
-    for t in tokens_list:
-        run = [r for r in pretrain_runs if r.get("token") == t]
-        if len(run) == 0:
-            if VERBOSE:
-                print(f"Missing Run: Optim {OPTIM_MAP[optim]} | Token {t}B | Size {size}M")
-            continue
-        assert len(run) == 1, print(run)
-        run = run[0]
 
-        run_info["pretrain"][t] = {
-            "token" : t,
-            "multiplier" : (t * 1000) / size,
-            # "c4": run["c4_val"],
-            "dclm_val": run["dclm_val"],
-            "dclm_train": run["dclm_train"]
-        }
+    if size == 1:
+        run_info["pretrain"] = dict()
+        assert len(pretrain_runs) == 1, print(pretrain_runs)
+        run = pretrain_runs[0]
+        for task in DOWNSTREAM_TASKS:
+            run_info["pretrain"][task] = run[task]
+    else:
+        for t in tokens_list:
+            run = [r for r in pretrain_runs if r.get("token") == t]
+            if len(run) == 0:
+                if VERBOSE:
+                    print(f"Missing Run: Optim {OPTIM_MAP[optim]} | Token {t}B | Size {size}M")
+                continue
+            assert len(run) == 1, print(run)
+            run = run[0]
+            run_info["pretrain"][t] = {
+                "token" : t,
+                "multiplier" : (t * 1000) / size,
+                # "c4": run["c4_val"],
+                "dclm_val": run["dclm_val"],
+                "dclm_train": run["dclm_train"]
+            }
 
     # print(pretrain_runs)
 
     if perturb:
         run_info["perturbed"] = dict()
         perturbed_runs = [r for r in all_runs if r.get("run_type") == "perturbed"]
+        print(perturbed_runs)
+        print(len(perturbed_runs))
 
         for perturbation in PERTURBATIONS:
             run_info["perturbed"][perturbation] = dict()
+            # print(perturbed_runs)
+            print(perturbation)
             run_perturbed = [r for r in perturbed_runs if r.get("perturbation") == perturbation]
+            print(run_perturbed)
+            print(len(run_perturbed))
 
-            for t in tokens_list:
-                run_pt = [r for r in pretrain_runs if r.get("token") == t]
-                if len(run_pt) == 0:
-                    continue
-                assert len(run_pt) == 1, print(run_pt)
-                run_pt = run_pt[0]
-                run_pert = [r for r in run_perturbed if r.get("token") == t]
-                if len(run_pert) == 0:
-                    continue
-                assert len(run_pert) == 1, print(run_pert)
-                run_pert = run_pert[0]
+            if size == 1:
+                assert len(run_perturbed) == 1, print(run_perturbed)
+                run_perturbed = run_perturbed[0]
+                print(run_perturbed)
+                for task in DOWNSTREAM_TASKS:
+                    run_info["perturbed"][perturbation][task] = run_perturbed[task]
+            else:
+                for t in tokens_list:
+                    run_pt = [r for r in pretrain_runs if r.get("token") == t]
+                    if len(run_pt) == 0:
+                        continue
+                    assert len(run_pt) == 1, print(run_pt)
+                    run_pt = run_pt[0]
+                    run_pert = [r for r in run_perturbed if r.get("token") == t]
+                    if len(run_pert) == 0:
+                        continue
+                    assert len(run_pert) == 1, print(run_pert)
+                    run_pert = run_pert[0]
 
-                run_info["perturbed"][perturbation][t] = {
-                    "token" : t,
-                    "multiplier" : (t * 1000) / size,
-                    "perturbed" : perturbation,
-                    "dclm_perturbed" : run_pert["dclm_val"],
-                    "dclm_val" : run_pt["dclm_val"]
-                }
+                    run_info["perturbed"][perturbation][t] = {
+                        "token" : t,
+                        "multiplier" : (t * 1000) / size,
+                        "perturbed" : perturbation,
+                        "dclm_perturbed" : run_pert["dclm_val"],
+                        "dclm_val" : run_pt["dclm_val"]
+                    }
     
     if quantized:
         run_info["quantized"] = dict()
@@ -100,20 +120,26 @@ def get_run_info(
             run_info["quantized"][bit] = dict()
             run_quantized = [r for r in quantized_runs if r.get("quant_bit") == bit]
 
-            for t in tokens_list:
-                run_quant = [r for r in run_quantized if r.get("token") == t]
+            if size == 1:
+                assert len(run_quantized) == 1, print(run_quantized)
+                run_quantized = run_quantized[0]
+                for task in DOWNSTREAM_TASKS:
+                    run_info["quantized"][bit][task] = run_quantized[task]
+            else:
+                for t in tokens_list:
+                    run_quant = [r for r in run_quantized if r.get("token") == t]
 
-                if len(run_quant) == 0:
-                    continue
-                assert len(run_quant) == 1, print(run_quant)
-                run_quant = run_quant[0]
+                    if len(run_quant) == 0:
+                        continue
+                    assert len(run_quant) == 1, print(run_quant)
+                    run_quant = run_quant[0]
 
-                run_info["quantized"][bit][t] = {
-                    "token" : t,
-                    "multiplier" : (t * 1000) / size,
-                    "quant_bit" : bit,
-                    "dclm_quant" : run_quant["dclm_val"],
-                }
+                    run_info["quantized"][bit][t] = {
+                        "token" : t,
+                        "multiplier" : (t * 1000) / size,
+                        "quant_bit" : bit,
+                        "dclm_quant" : run_quant["dclm_val"],
+                    }
 
     if cpt_dataset is not None:
 

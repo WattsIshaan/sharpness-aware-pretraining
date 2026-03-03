@@ -33,6 +33,7 @@ __all__ = [
     "BoltOnWarmupScheduler",
     "build_optimizer",
     "build_scheduler",
+    "WSD",
 ]
 
 
@@ -1776,6 +1777,28 @@ class LinearWithWarmup(Scheduler):
             max_steps = max_steps - self.warmup_steps
             return initial_lr - (initial_lr - eta_min) * (step / max_steps)
 
+@dataclass
+class WSD(Scheduler):
+    warmup_steps: int
+    anneal_begin: int
+    alpha_f: float = 0.1
+    t_max: Optional[int] = None
+
+
+    def get_lr(self, initial_lr: float, step: int, max_steps: int) -> float:
+        max_steps = max_steps if self.t_max is None else self.t_max
+        eta_min = initial_lr * self.alpha_f
+        if step < self.warmup_steps:
+            return self._linear_warmup(initial_lr, step, self.warmup_steps)
+        elif step >= max_steps:
+            return eta_min
+        elif step < self.anneal_begin:
+            return initial_lr
+        else:
+            step = step - self.anneal_begin
+            max_steps = max_steps - self.anneal_begin
+            return initial_lr - (initial_lr - eta_min) * (step / max_steps)
+
 
 @dataclass
 class InvSqrtWithWarmup(Scheduler):
@@ -2310,6 +2333,18 @@ def build_scheduler(cfg: TrainConfig, sched_cfg: Optional[SchedulerConfig] = Non
             grad_clip_warmup_factor=sched_cfg.grad_clip_warmup_factor,
             warmup_min_lr=sched_cfg.warmup_min_lr,
             warmup_steps=int(sched_cfg.t_warmup),
+        )
+    elif sched_cfg.name == SchedulerType.wsd:
+        return WSD(
+            grad_clip_warmup_steps=(
+                None if sched_cfg.grad_clip_warmup_steps is None else int(sched_cfg.grad_clip_warmup_steps)
+            ),
+            grad_clip_warmup_factor=sched_cfg.grad_clip_warmup_factor,
+            warmup_min_lr=sched_cfg.warmup_min_lr,
+            warmup_steps=int(sched_cfg.t_warmup),
+            alpha_f=sched_cfg.alpha_f,
+            t_max=None if sched_cfg.t_max is None else int(sched_cfg.t_max),
+            anneal_begin=int(sched_cfg.anneal_begin),
         )
     else:
         raise NotImplementedError

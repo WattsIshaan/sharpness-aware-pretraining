@@ -21,6 +21,7 @@ CODE_PATH: Optional[str] = Project.config.CODE_PATH
 OLMO_PATH: Optional[str] = Project.config.OLMO_PATH
 GS_PATH: Optional[str] = Project.config.GS_PATH
 GS_DATA_PATH: Optional[str] = Project.config.GS_DATA_PATH
+CLUSTER_NAME: Optional[str] = Project.config.CLUSTER_NAME
 
 
 # Cache for remote GS file list - dict mapping folder paths to file sets
@@ -94,4 +95,7 @@ def get_random_local_path() -> str:
     if LOCAL_OUTPUT_PATH is None:
         raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
     local_output_path: str = cast(str, LOCAL_OUTPUT_PATH)
-    return os.path.join(local_output_path, ''.join(random.choices(string.ascii_letters, k=8)))
+    if CLUSTER_NAME == 'flame':
+        return os.path.join(local_output_path, ''.join(random.choices(string.ascii_letters, k=8)))
+    else:
+        return local_output_path

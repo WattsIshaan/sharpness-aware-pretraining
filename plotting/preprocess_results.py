@@ -1,12 +1,16 @@
 import json
 import os
 import re
-from utils.config_globals import RESULTS_DIR, CHECKPOINT_MAP, TASKNAME_MAP
+from utils.config_globals import RESULTS_DIR, CHECKPOINT_MAP, TASKNAME_MAP, DOWNSTREAM_TASKS
+import argparse
 
-def main():
+def main(midtrain: bool = False):
 
     results = list()
-    raw_results_dir = os.path.join(RESULTS_DIR, "ModelEvaluation")
+    if midtrain:
+        raw_results_dir = os.path.join(RESULTS_DIR, "ModelEvaluationDownstream")
+    else:
+        raw_results_dir = os.path.join(RESULTS_DIR, "ModelEvaluation")
 
     for file in os.listdir(raw_results_dir):
 
@@ -14,10 +18,16 @@ def main():
         with open(fname, 'r') as f:
             data = json.load(f)
 
-        fname = fname.removesuffix("-eval.json")
+        if midtrain:
+            fname = fname.removesuffix("-downstream-eval.json")
+        else:
+            fname = fname.removesuffix("-eval.json")
         
         # MODEL SIZE
-        size_match = re.search(r'OLMo2-(\d+)m-', fname)
+        if midtrain:
+            size_match = re.search(r'OLMo2-(\d+)b-', fname)
+        else:
+            size_match = re.search(r'OLMo2-(\d+)m-', fname)
         if size_match:
             size = int(size_match.group(1))
         else:
@@ -116,7 +126,10 @@ def main():
                 anneal_optim = "adamw"
 
         else:
-            token_match = re.search(r'tk(\d+)B', fname)
+            if midtrain:
+                token_match = re.search(r'tk(\d+)T', fname)
+            else:   
+                token_match = re.search(r'tk(\d+)B', fname)
             token = token_match.group(1) if token_match else "unknown"
             pt_lrs = "cosine"
             if token != "unknown":
@@ -128,13 +141,22 @@ def main():
                 raise ValueError("Unable to Parse tk<B> for token: %s" % fname)
 
         # Get the optimizer (can be sam, adamw, lionw, sam_adamw, sam_sgd)
-        optimizer_match = re.search(r'tk\d+B-([a-zA-Z0-9_]+)-lr', fname)
-        optimizer_raw = optimizer_match.group(1) if optimizer_match else "unknown"
+        if midtrain:
+            # For midtrain, optimizer is after the 50B- (or e.g. 60B-, etc.)
+            # Just match 'adamw' or 'sam'
+            optimizer_match = re.search(r'\d+B-(sam|adamw)', fname)
+            optimizer_raw = optimizer_match.group(1) if optimizer_match else "unknown"
+        else:
+            optimizer_match = re.search(r'tk\d+B-([a-zA-Z0-9_]+)-lr', fname)
+            optimizer_raw = optimizer_match.group(1) if optimizer_match else "unknown"
 
         # Handle sam_adamw and sam_sgd specially
-        if optimizer_raw in ("sam_adamw", "sam_sgd"):
+        if optimizer_raw in ("sam_adamw", "sam_sgd" ,"sam"):
             optimizer = "sam"
-            base_optimizer = optimizer_raw.split("_")[1]
+            if midtrain:
+                base_optimizer = "adamw"
+            else:
+                base_optimizer = optimizer_raw.split("_")[1]
 
             # Properly extract rho after "-rho", e.g.: "...-bs256-rho1e-1-"
             rho_match = re.search(r'-rho([0-9eE\+\-\.]+)', fname)
@@ -158,30 +180,35 @@ def main():
             rho_val = None
 
         # Always get pretrain_lr (after the optimizer)
-        pretrain_lr_match = re.search(rf'{optimizer_raw}-lr([0-9eE\+\-\.]+)', fname)
-        pretrain_lr = pretrain_lr_match.group(1) if pretrain_lr_match else "unknown"
-        if pretrain_lr != "unknown":
-            pretrain_lr_cleaned = re.sub(r'[^0-9eE\+\-\.]+$', '', pretrain_lr)
-            pretrain_lr_cleaned = pretrain_lr_cleaned.rstrip('-')
-            try:
-                pretrain_lr = float(pretrain_lr_cleaned)
-            except Exception:
-                raise ValueError(f"Unable to convert to Float: {pretrain_lr_cleaned!r}")
+        if midtrain:
+            pretrain_lr = None
+            pretrain_wd = None
+        
         else:
-            raise ValueError("Unable to Parse pretrain_lr in %s" % fname)
+            pretrain_lr_match = re.search(rf'{optimizer_raw}-lr([0-9eE\+\-\.]+)', fname)
+            pretrain_lr = pretrain_lr_match.group(1) if pretrain_lr_match else "unknown"
+            if pretrain_lr != "unknown":
+                pretrain_lr_cleaned = re.sub(r'[^0-9eE\+\-\.]+$', '', pretrain_lr)
+                pretrain_lr_cleaned = pretrain_lr_cleaned.rstrip('-')
+                try:
+                    pretrain_lr = float(pretrain_lr_cleaned)
+                except Exception:
+                    raise ValueError(f"Unable to convert to Float: {pretrain_lr_cleaned!r}")
+            else:
+                raise ValueError("Unable to Parse pretrain_lr in %s" % fname)
 
-        # Always get pretrain_wd (right after pretrain_lr)
-        pretrain_wd_match = re.search(rf'{optimizer_raw}-lr[0-9eE\+\-\.]+-wd([0-9eE\+\-\.]+)', fname)
-        pretrain_wd = pretrain_wd_match.group(1) if pretrain_wd_match else "unknown"
-        if pretrain_wd != "unknown":
-            pretrain_wd_cleaned = re.sub(r'[^0-9eE\+\-\.]+$', '', pretrain_wd)
-            pretrain_wd_cleaned = pretrain_wd_cleaned.rstrip('-')
-            try:
-                pretrain_wd = float(pretrain_wd_cleaned)
-            except Exception:
-                raise ValueError(f"Unable to convert to Float: {pretrain_wd_cleaned!r}")
-        else:
-            raise ValueError("Unable to Parse pretrain_wd in %s" % fname)
+            # Always get pretrain_wd (right after pretrain_lr)
+            pretrain_wd_match = re.search(rf'{optimizer_raw}-lr[0-9eE\+\-\.]+-wd([0-9eE\+\-\.]+)', fname)
+            pretrain_wd = pretrain_wd_match.group(1) if pretrain_wd_match else "unknown"
+            if pretrain_wd != "unknown":
+                pretrain_wd_cleaned = re.sub(r'[^0-9eE\+\-\.]+$', '', pretrain_wd)
+                pretrain_wd_cleaned = pretrain_wd_cleaned.rstrip('-')
+                try:
+                    pretrain_wd = float(pretrain_wd_cleaned)
+                except Exception:
+                    raise ValueError(f"Unable to convert to Float: {pretrain_wd_cleaned!r}")
+            else:
+                raise ValueError("Unable to Parse pretrain_wd in %s" % fname)
 
         # Default cpt values
         cpt_lr, cpt_wd, cpt_dataset, cpt_tokens, cpt_bs = None, None, None, None, None
@@ -262,9 +289,13 @@ def main():
             "pretrain_wd": pretrain_wd,
             "pretrain_lrs": pt_lrs,
             # "c4_val": data[TASKNAME_MAP["c4_val"]],
-            "dclm_val": data[TASKNAME_MAP["dclm_val"]],
             "size": size,
         }
+        if midtrain:
+            for task in DOWNSTREAM_TASKS:
+                run_info[task] = data[TASKNAME_MAP[task]]
+        else:
+            run_info["dclm_val"] = data[TASKNAME_MAP["dclm_val"]]
         if run_info["run_type"] == "pretrain":
             run_info["dclm_train"] = data.get(TASKNAME_MAP["dclm_train"], None)
         if perturbation is not None:
@@ -292,4 +323,7 @@ def main():
         json.dump(results, file, indent=2)
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--midtrain", action="store_true")
+    args = parser.parse_args()
+    main(args.midtrain)

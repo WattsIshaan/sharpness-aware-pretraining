@@ -570,6 +570,7 @@ class SchedulerType(StrEnum):
     constant = "constant"
     cosine_linear_envelope = "cosine_linear_envelope"
     constant_with_warmup = "constant_with_warmup"
+    wsd = "wsd"
 
 
 class SchedulerUnits(StrEnum):
@@ -584,7 +585,7 @@ class SchedulerConfig(BaseConfig):
     t_warmup: Union[int, float] = 100
     t_max: Optional[Union[int, float]] = None
     alpha_f: float = 0.1
-
+    anneal_begin: Optional[int] = None
     grad_clip_warmup_steps: Optional[Union[int, float]] = None
     """
     The warmup period for which the max grad norm (or norm ratio) will be set to its

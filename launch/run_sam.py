@@ -2,7 +2,7 @@
 
 # 1) Load project configuration as early as possible
 from experiments import Project
-Project.init('60m-experiments')
+Project.init('150m-experiments')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
@@ -19,17 +19,18 @@ pretrained_models = ArtifactSet.from_product(
         params={
             'optimizer': ['sam'],
             'pt_lr': [-1],
-            'train_tokens': [192], #, 
-            # 'train_tokens': [4, 8, 16, 32, 64],
-            # 'train_tokens': [15, 30, 60, 120],
+            # 'train_tokens': [12, 24, 48, 96, 192], 
+            # "train_tokens": [96, 192],
+            # 'train_tokens': [15, 30],
             # 'train_tokens': [120],
+            'train_tokens': [15, 30, 60, 120],
             'weight_decay': [0.1],
             'batch_size': [256],
             'scheduler_name': ['cosine_with_warmup'],
             'sam_rho': [5e-2],
             'scheduler_alpha_f': [0.1],
             'sam_base_optimizer': ['adamw'],
-            'model_size': ['60m']
+            'model_size': ['150m']
         }
     )
 

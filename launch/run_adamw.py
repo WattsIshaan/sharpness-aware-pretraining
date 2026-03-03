@@ -10,29 +10,28 @@ from launch.artifacts import PretrainedModel, ModelEvaluation, HFModel
 from launch.cpt import build_cpt_models, build_cpt_model_evaluations
 from launch.perturb import build_perturbed_models, build_perturbed_model_evaluations
 from launch.quantize import build_quantized_model_evaluations
-from launch.anneal import build_annealed_models
+from launch.anneal import build_annealed_models, build_annealed_models2
 
 # Build SGD-only pretrained models
 pretrained_models = ArtifactSet.from_product(
         cls=PretrainedModel,
         params={
             'optimizer': ['adamw'],
+            # 'pt_lr': [1e-3],
             # 'pt_lr': [1e-4, 6e-4],
-            # 'pt_lr': [6e-4],
             'pt_lr': [3e-4],
             # 'pt_lr': [-1],
             # 'train_tokens': [60, 120],
             # 'train_tokens': [12, 24, 48, 96, 192],
             # "train_tokens": [25],
-            # "train_tokens": [31],
-            'train_tokens': [192],
-            # 'train_tokens': [121],
+            # "train_tokens": [61],
+            'train_tokens': [200],
             # 'train_tokens': [61],
             # 'train_tokens': [15, 30, 60, 120],
             'weight_decay': [0.1],
             'batch_size': [256],
-            'scheduler_name': ['cosine_with_warmup'],
-            # 'scheduler_name': ['constant_with_warmup'],
+            # 'scheduler_name': ['cosine_with_warmup'],
+            'scheduler_name': ['constant_with_warmup'],
             'scheduler_alpha_f': [0.1],
             'model_size': ['60m']
         }
@@ -56,7 +55,10 @@ model_evaluations = pretrained_models.map(lambda model: ModelEvaluation(model=mo
 # annealed_models = build_annealed_models(pretrained_models)
 # annealed_model_evaluations = annealed_models.map(lambda model: ModelEvaluation(model=model))
 
-# # # # Perturbed annealed models and evaluations
+annealed_models2 = build_annealed_models2(pretrained_models)
+annealed_model_evaluations2 = annealed_models2.map(lambda model: ModelEvaluation(model=model))
+
+# # Perturbed annealed models and evaluations
 # perturbed_annealed_models = build_perturbed_models(annealed_models)
 # perturbed_annealed_evaluations = build_perturbed_model_evaluations(perturbed_annealed_models)
 
@@ -69,8 +71,8 @@ model_evaluations = pretrained_models.map(lambda model: ModelEvaluation(model=mo
 
 
 # CPT stages for SGD models
-cpt_models = build_cpt_models(pretrained_models)
-cpt_model_evaluations = build_cpt_model_evaluations(cpt_models)
+# cpt_models = build_cpt_models(pretrained_models)
+# cpt_model_evaluations = build_cpt_model_evaluations(cpt_models)
 
 # CPT stages for SGD models
 # annealed_cpt_models = build_cpt_models(annealed_models)
@@ -103,6 +105,8 @@ executor.stage('pretrain_eval', model_evaluations)
 
 # executor.stage('anneal', annealed_models)
 # executor.stage('anneal_eval', annealed_model_evaluations)
+executor.stage('anneal2', annealed_models2)
+executor.stage('anneal2_eval', annealed_model_evaluations2)
 
 # executor.stage('anneal_perturb', perturbed_annealed_models)
 # executor.stage('anneal_perturb_eval', perturbed_annealed_evaluations)
@@ -111,10 +115,11 @@ executor.stage('pretrain_eval', model_evaluations)
 
 # executor.stage('anneal_quant_eval', annealed_quantized_models_evaluations)
 
-# Stage CPT and its evaluations
-executor.stage('cpt', cpt_models)
-executor.stage('cpt_eval', cpt_model_evaluations)
-# Stage Annealed CPT and its evaluations
+# # Stage CPT and its evaluations
+# # executor.stage('cpt', cpt_models)
+# # executor.stage('cpt_eval', cpt_model_evaluations)
+
+# # Stage Annealed CPT and its evaluations
 # executor.stage('acpt', annealed_cpt_models)
 # executor.stage('acpt_eval', annealed_cpt_model_evaluations)
 

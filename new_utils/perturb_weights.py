@@ -202,22 +202,24 @@ def main() -> int:
         # Construct paths following evaluate_perturbed.py structure
         # Input: gcs_dir/model_name/final-unsharded/model.pt
         original_checkpoint_dir = f"{args.gcs_dir.rstrip('/')}/{args.model_name}"
-        original_model_path = f"{original_checkpoint_dir}/final-unsharded/model.pt"
+        original_final_dir = f"{original_checkpoint_dir}/final-unsharded"
+        original_model_path = f"{original_final_dir}/model.pt"
         
         # Output: output_gcs_dir/model_name_perturbed_{sigma}/final-unsharded/model.pt
         perturbed_model_name = get_perturbed_model_name(args.model_name, args.sigma)
         perturbed_checkpoint_dir = f"{args.output_gcs_dir.rstrip('/')}/{perturbed_model_name}"
-        perturbed_model_path = f"{perturbed_checkpoint_dir}/final-unsharded/model.pt"
+        perturbed_final_dir = f"{perturbed_checkpoint_dir}/final-unsharded"
+        perturbed_model_path = f"{perturbed_final_dir}/model.pt"
         
-        print(f"📋 Original checkpoint directory: {original_checkpoint_dir}")
+        print(f"📋 Original final-unsharded directory: {original_final_dir}")
         print(f"📋 Original model path: {original_model_path}")
-        print(f"📋 Perturbed checkpoint directory: {perturbed_checkpoint_dir}")
+        print(f"📋 Perturbed final-unsharded directory: {perturbed_final_dir}")
         print(f"📋 Perturbed model path: {perturbed_model_path}")
         
-        # Step 1: Copy entire checkpoint directory to new location
-        print(f"📦 Copying checkpoint directory from {original_checkpoint_dir} to {perturbed_checkpoint_dir}...")
-        copy_gcs_directory(original_checkpoint_dir, perturbed_checkpoint_dir)
-        print(f"✅ Checkpoint directory copied")
+        # Step 1: Copy only the final-unsharded subdirectory to new location
+        print(f"📦 Copying final-unsharded directory from {original_final_dir} to {perturbed_final_dir}...")
+        copy_gcs_directory(original_final_dir, perturbed_final_dir)
+        print(f"✅ final-unsharded directory copied")
         
         # Step 2: Load and perturb the model
         print(f"📥 Loading model from {original_model_path}...")

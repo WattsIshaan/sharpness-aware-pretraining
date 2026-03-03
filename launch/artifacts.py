@@ -1,7 +1,9 @@
 import os
 import random
 import math
+import json
 import logging
+import shutil
 from dataclasses import dataclass
 from typing import cast, Dict, List, Any
 
@@ -39,6 +41,11 @@ LIST_OF_PRETRAIN_FILES = {
             for i in range(50, 60) for j in range(5)
         ],
         "tokens_per_file": 3 * BILLION,
+        "val": {
+            "dclm-validation": ['dclm/val/dclm-20m.npy']#, 'dclm/val/dclm-train-20m.npy']
+        }
+    },
+    "dolmino": {
         "val": {
             "dclm-validation": ['dclm/val/dclm-20m.npy']#, 'dclm/val/dclm-train-20m.npy']
         }
@@ -243,6 +250,16 @@ ANNEAL_CKPT = {
     },
 }
 
+ANNEAL_CKPT2 = {
+    60: {
+        5: 695000,
+        10: 660000,
+        20: 585000,
+        50: 365000,
+        100: 0,
+    },
+}
+
 # Merge pretrain validation sets into CPT dictionaries
 for base in LIST_OF_PRETRAIN_FILES:
     base_val = LIST_OF_PRETRAIN_FILES[base]["val"]
@@ -318,6 +335,7 @@ class PretrainedModel(Artifact):
 
     @property
     def exists(self) -> bool:
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
             
@@ -331,15 +349,13 @@ class PretrainedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gres": f"gpu:{self.pretrain_gpus}",
+            "gpus": self.pretrain_gpus,
             "nodes": 1,
-            "cpus": max(1, self.pretrain_gpus * 2),
+            "cpus": self.pretrain_gpus * 2,
             "mem": '64GB',
             "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu-c_qos',
-            "account": 'aditirag',
-            "time": "12-00:00:00"
+            "time": "2-00:00:00",
+            "partition": 'general',
         }
 
     def construct(self, builder: Task):
@@ -440,6 +456,194 @@ class PretrainedModel(Artifact):
 
         builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_output_path}")
+        shutil.rmtree(local_output_path, ignore_errors=True)
+
+@dataclass(frozen=True)
+class MidtrainedModel(Artifact):
+    """
+    MidtrainedModel for OLMo2-1B stage-2 (midtraining from a pre-trained checkpoint).
+    Uses hyperparameters from configs/official-0425/OLMo2-1B-stage2-seed42.yaml.
+    Data paths are loaded from launch/utils/midtrain_data.json.
+    """
+    optimizer: str = 'adamw'
+    sam_rho: float = 0.05
+    load_path: str = 'PretrainedModel/OLMo2-1b-tk4T-adamw/final-unsharded'
+    midtrain_gpus: int = 8
+    seed: int = 42
+    per_device_train_batch_size: int = 8
+
+    @property
+    def relpath(self) -> str:
+        return f'MidtrainedModel/{self.run_name}'
+
+    @property
+    def run_name(self) -> str:
+        name = f'OLMo2-1b-tk4T-adamw-Midtrain-50B-{self.optimizer}'
+        if self.optimizer == "sam":
+            name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
+        return name
+
+    @property
+    def checkpoint_relpath(self) -> str:
+        return f'{self.relpath}/final-unsharded'
+    
+    @property
+    def pretrain_dataset(self) -> str:
+        return "dolmino"
+
+    @property
+    def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
+        remote_files = G.get_remote_files(subfolder='MidtrainedModel')
+        found = any(f.startswith(remote_path) for f in remote_files)
+        status = "✓ EXISTS" if found else "❌ NOT found"
+        log.info(f"[MidtrainedModel] {status}: {self.run_name}")
+        return found
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {
+            "gpus-per-node": "H100:8",
+            "nodes": 1,
+            "cpus-per-task": 96,
+            "mem": '2000000M',
+            "requeue": True,
+            "partition": 'flame-earlybirds',
+            "qos": 'earlybird_qos',
+            "account": 'aditirag',
+            "time": "2-00:00:00"
+        }
+
+    def construct(self, builder: Task):
+        local_output_path = G.get_random_local_path()
+        local_data_path = local_output_path if G.DOWNLOAD_DATA else cast(str, G.LOCAL_DATA_PATH)
+        save_folder = os.path.join(local_output_path, self.relpath)
+        gs_path = cast(str, G.GS_PATH)
+        remote_folder = os.path.join(gs_path, self.relpath)
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+
+        pre_ckpt_rel = self.load_path
+        local_pre_path = os.path.join(local_output_path, pre_ckpt_rel)
+        builder.rsync_from_gs(os.path.join(gs_path, pre_ckpt_rel), local_pre_path, delete=True, checksum=True, skip_existing=True, check_exists=True, contents=True)
+
+        # 3. Resolve train/eval paths: if gs:// and DOWNLOAD_DATA, download to local
+        dataset_info = json.load(open(os.path.join(olmo_path, 'launch', 'utils', 'midtrain_data.json')))
+        train_data_paths = [os.path.join(local_data_path, p) for p in dataset_info['train_data_paths']]
+        # train_data_paths = [train_data_paths[0]]
+
+        # Build eval_datasets for get_train_config: pretrain-perplexity style
+        eval_datasets = None
+        eval_datasets = {'downstream': [
+            'winogrande',
+            'mmlu_other_var',
+            'sciq',
+            'hellaswag',
+            'copa',
+            'openbook_qa',
+        ]}
+
+        # 4. Generate config (1B midtraining hyperparameters from OLMo2-1B-stage2-seed42.yaml)
+        config = get_train_config(
+            run_name=self.run_name,
+            save_folder=save_folder,
+            train_data_paths=train_data_paths,
+            eval_datasets=eval_datasets,
+            model_size='1b',
+            optimizer=self.optimizer,
+            sam_rho=self.sam_rho,
+            learning_rate=7.4487e-5,
+            weight_decay=0.1,
+            optimizer_eps=1e-8,
+            decay_embeddings=False,
+            max_duration='50e9T',
+            stop_at=23852,
+            seed=self.seed,
+            scheduler_name='linear_with_warmup',
+            scheduler_t_warmup=0,
+            scheduler_alpha_f=0.0,
+            global_train_batch_size=1024,
+            device_train_microbatch_size=self.per_device_train_batch_size,
+            device_eval_batch_size=8,
+            eval_interval=1000,
+            save_interval_unsharded=4000,
+            save_num_unsharded_checkpoints_to_keep=-1,
+            load_path=local_pre_path,
+            restore_dataloader=False,
+            reset_optimizer_state=False,
+            max_grad_norm=1.0,
+            wandb_project=cast(str, G.PROJECT_NAME),
+            wandb_entity=cast(str, G.WANDB_ENTITY),
+            wandb_id=self.run_name,
+            wandb_resume='allow',
+            try_load_latest_save=True,
+            run_sync_cmd=True,
+            dtype='uint32',
+            softmax_auxiliary_loss=True,
+            auxiliary_loss_multiplier=1e-5,
+            fused_loss=True,
+            # sharded_checkpointer='olmo_core',
+            distributed_strategy='ddp',
+            gen1_gc_interval=10,
+            # fsdp={
+            #     'wrapping_strategy': None,
+            #     'sharding_strategy': 'SHARD_GRAD_OP',
+            #     'precision': 'mixed',
+            # },
+        )
+        # Overrides for midtraining-specific options
+        config['tokenizer'] = {
+            'identifier': 'tokenizers/allenai_dolma2.json',
+            'truncate_direction': 'right',
+        }
+        config['data'].update({
+            'num_workers': 8,
+            'drop_last': True,
+            'pin_memory': True,
+            'prefetch_factor': 8,
+            'persistent_workers': True,
+            'timeout': 0,
+            'pad_direction': 'right',
+            'instance_filter': {
+                'repetition_max_period': 13,
+                'repetition_min_period': 1,
+                'repetition_max_count': 32,
+            },
+        })
+        # 5. Sync & Execution
+        builder.set_env("SYNC_CMD", f"gsutil -m rsync -r {save_folder}/ {remote_folder}/")
+        builder.ensure_directory(save_folder)
+        builder.rsync_from_gs(remote_folder, save_folder, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
+
+        config_path = os.path.join(save_folder, 'config.yaml')
+        builder.create_yaml_file(config_path, config)
+
+        if G.DOWNLOAD_DATA:
+            all_paths = train_data_paths.copy()
+            unique_dirs = {os.path.dirname(p) for p in all_paths}
+            gs_data_path = cast(str, G.GS_DATA_PATH)
+            for local_dir in unique_dirs:
+            # for local_dir in all_paths:
+                gs_dir = local_dir.replace(local_data_path, gs_data_path)
+                builder.download_from_gs(gs_dir, local_dir, directory=True)
+                # builder.download_from_gs(gs_dir, local_dir, directory=False, contents=True)
+
+        
+        train_script = os.path.join(olmo_path, 'scripts', 'train.py')
+        builder.run_command(
+            f'cd {olmo_path} && torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d '
+            f'--nproc_per_node={self.midtrain_gpus} {train_script} {config_path}'
+        )
+
+        builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
+
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_output_path}")
+        shutil.rmtree(local_output_path, ignore_errors=True)
+
+
 @dataclass(frozen=True)
 class AnnealedModel(Artifact):
     """
@@ -461,6 +665,10 @@ class AnnealedModel(Artifact):
     @property
     def pretrain_ckpt_step(self) -> int:
         return ANNEAL_CKPT[self.anneal_percent][self.anneal_match][int(self.model_size[:-1])][self.pt_token]
+
+    @property
+    def train_tokens(self) -> int:
+        return self.pretrained_model.train_tokens
 
     @property
     def train_tokens(self) -> int:
@@ -500,7 +708,7 @@ class AnnealedModel(Artifact):
         return {
             "gres": f"gpu:{self.anneal_gpus}",
             "nodes": 1,
-            "cpus": max(1, self.anneal_gpus * 2),
+            "cpus": self.anneal_gpus * 2,
             "mem": '64GB',
             "requeue": True,
             "partition": 'flame',
@@ -634,6 +842,183 @@ class AnnealedModel(Artifact):
 
         builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_output_path}")
+        shutil.rmtree(local_output_path, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class AnnealedModel2(Artifact):
+    """
+    AnnealedModel loads a checkpoint from a PretrainedModel and continues training
+    with the WSD (Warmup-Stable-Decay) scheduler.
+    """
+    pretrained_model: PretrainedModel
+    pt_token: int
+    anneal_gpus: int = 8
+    anneal_optim: str = 'adamw'
+    anneal_percent: int = None
+
+    @property
+    def relpath(self) -> str:
+        return f'AnnealedModel/{self.run_name}'
+
+    @property
+    def pretrain_ckpt_step(self) -> int:
+        return ANNEAL_CKPT2[int(self.model_size[:-1])][self.anneal_percent]
+
+    @property
+    def train_tokens(self) -> int:
+        return self.pretrained_model.train_tokens
+
+    @property
+    def checkpoint_relpath(self) -> str:
+        return f'{self.relpath}/final-unsharded'
+
+    @property
+    def run_name(self) -> str:
+        return f'{self.pretrained_model.run_name}-anneal-{self.anneal_optim}-ckpt{self.pretrain_ckpt_step}-percent{self.anneal_percent}'
+    
+    @property
+    def pretrain_dataset(self) -> str:
+        return self.pretrained_model.pretrain_dataset
+    
+    @property
+    def model_size(self) -> str:
+        return self.pretrained_model.model_size
+
+    @property
+    def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+            
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
+        remote_files = G.get_remote_files(subfolder='AnnealedModel')
+        return any(f.startswith(remote_path) for f in remote_files)
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {
+            "gpus": self.anneal_gpus,
+            "nodes": 1,
+            "cpus": self.anneal_gpus * 2,
+            "mem": '64GB',
+            "requeue": True,
+            # "partition": 'preempt',
+            "partition": 'general',
+            "time": "2-00:00:00"
+        }
+
+    def construct(self, builder: Task):
+        local_output_path = G.get_random_local_path()
+        local_data_path = local_output_path if G.DOWNLOAD_DATA else G.LOCAL_DATA_PATH
+        
+        save_folder = os.path.join(local_output_path, self.relpath)
+        gs_path = cast(str, G.GS_PATH)
+        remote_folder = os.path.join(gs_path, self.relpath)
+
+        # 1. Checkpoint Resolution
+        # Path format: {pretrain_relpath}/step{step}-unsharded
+        ckpt_rel = f'{self.pretrained_model.relpath}/step{self.pretrain_ckpt_step}-unsharded'
+        pretrained_model_gs_path = os.path.join(gs_path, ckpt_rel)
+        local_checkpoint_path = os.path.join(local_output_path, ckpt_rel)
+
+        log.info(f"Downloading checkpoint from: {pretrained_model_gs_path}")
+        builder.rsync_from_gs(pretrained_model_gs_path, local_checkpoint_path, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
+
+        train_data_paths = [os.path.join(local_data_path, p) for p in get_train_files(self.pretrain_dataset, self.train_tokens)]
+
+        val_info = LIST_OF_PRETRAIN_FILES[self.pretrain_dataset]["val"]
+        eval_datasets = {}
+        eval_datasets["pretrain"] = {}
+        eval_datasets["cpt"] = {}
+        for k, v in val_info.items():
+            if isinstance(v, list):
+                eval_datasets["pretrain"][k] = [os.path.join(local_data_path, p) for p in v]
+            elif isinstance(v, dict):
+                eval_datasets["pretrain"][k] = {mk: [os.path.join(local_data_path, p) for p in mv] for mk, mv in v.items()}
+
+        # 4. Config Overrides
+        model_overrides = {}
+        if self.pretrain_dataset == "dclm":
+            model_overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
+
+        # 5. Generate Configuration
+        config = get_train_config(
+            run_name=self.run_name,
+            save_folder=save_folder,
+            train_data_paths=train_data_paths,
+            eval_datasets=eval_datasets,
+            model_size=self.model_size,
+            optimizer=self.anneal_optim,
+            learning_rate=self.pretrained_model.learning_rate,
+            weight_decay=self.pretrained_model.weight_decay,
+            muon_learning_rate=self.pretrained_model.muon_learning_rate,
+            muon_momentum=self.pretrained_model.muon_momentum,
+            muon_weight_decay=self.pretrained_model.muon_weight_decay,
+            sam_rho=self.pretrained_model.sam_rho,
+            sam_base_optimizer=self.pretrained_model.sam_base_optimizer,
+            max_duration=f"{self.train_tokens}e9T",
+            stop_at=None,
+            seed=6198,
+            model_overrides=model_overrides,
+            scheduler_name='wsd',
+            scheduler_t_warmup=WARMUP_STEPS[int(self.model_size[:-1])],
+            scheduler_anneal_begin=self.pretrain_ckpt_step,
+            global_train_batch_size=self.pretrained_model.batch_size,
+            device_train_microbatch_size=4,
+            eval_interval=20000,
+            save_interval_unsharded=5000,
+            wandb_project=cast(str, G.PROJECT_NAME),
+            wandb_entity=cast(str, G.WANDB_ENTITY),
+            wandb_id=self.run_name,
+            wandb_resume='allow',
+            load_path=local_checkpoint_path,
+            reset_optimizer_state=False,  # Essential for maintaining momentum in WSD
+            restore_dataloader=True,
+            try_load_latest_save=True,
+            run_sync_cmd=True,
+            tokenizer={
+                'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json',
+                'truncate_direction': 'right',
+            },
+            dtype='uint32' if self.pretrain_dataset == "dclm" else 'uint16',
+        )
+
+        # 6. Execution & Sync
+        builder.set_env("SYNC_CMD", f"gsutil -m rsync -r {save_folder}/ {remote_folder}/")
+        builder.ensure_directory(save_folder)
+        
+        # Pull existing results for this specific anneal run if it crashed
+        builder.rsync_from_gs(remote_folder, save_folder, delete=True, checksum=False, skip_existing=False, check_exists=True, contents=True)
+        
+        config_path = os.path.join(save_folder, 'config.yaml')
+        builder.create_yaml_file(config_path, config)
+
+        # 7. Data Downloads
+        if G.DOWNLOAD_DATA:
+            all_paths = train_data_paths.copy()
+            for v in eval_datasets["pretrain"].values():
+                all_paths.extend(v if isinstance(v, list) else v['data'] + v.get('masks', []))
+            
+            unique_dirs = {os.path.dirname(p) for p in all_paths}
+            gs_data_path = cast(str, G.GS_DATA_PATH)
+            for local_dir in unique_dirs:
+                gs_dir = local_dir.replace(local_data_path, gs_data_path)
+                builder.download_from_gs(gs_dir, local_dir, directory=True)
+
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        train_script = os.path.join(olmo_path, 'scripts', 'train.py')
+        builder.run_command(
+            f'cd {olmo_path} && torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d '
+            f'--nproc_per_node={self.anneal_gpus} {train_script} {config_path}'
+        )
+
+        builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
+
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_output_path}")
+        shutil.rmtree(local_output_path, ignore_errors=True)
+
 
 @dataclass(frozen=True)
 class CPTModel(Artifact):
@@ -688,15 +1073,16 @@ class CPTModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gres": f"gpu:{self.cpt_gpus}",
-            "nodes": 1,
-            "cpus": max(1, self.cpt_gpus * 2),
-            "mem": '64GB',
-            "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu-c_qos',
-            "account": 'aditirag',
-            "time": "12-00:00:00"
+            'gpus': f"A100_40GB:{str(self.cpt_gpus)}",
+            # 'gpus': f"L40:{str(self.cpt_gpus)}",
+            'nodes': 1,
+            # 'cpus-per-task': self.cpt_gpus * 2,
+            'cpus': self.cpt_gpus * 2,
+            'mem': '64GB',
+            'requeue': True,
+            # 'partition': 'preempt',
+            "partition": 'general',
+            "time": "2-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -796,10 +1182,14 @@ class CPTModel(Artifact):
         )
         builder.upload_to_gs(save_folder, remote_folder, directory=True)
 
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
+
 
 @dataclass(frozen=True)
 class PerturbedModel(Artifact):
-    base_model: "PretrainedModel | AnnealedModel"
+    base_model: "PretrainedModel | AnnealedModel | MidtrainedModel"
     sigma: float
     seed: int = 64
     device: str = "cpu"
@@ -839,13 +1229,11 @@ class PerturbedModel(Artifact):
         return {
             "gres": f"gpu:1",
             "nodes": 1,
-            "cpus": 4,
-            "mem": '64GB',
+            "cpus-per-task": 4,
+            "mem": "256GB",
             "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu-c_qos',
-            "account": 'aditirag',
-            "time": "12-00:00:00"
+            "partition": "general",
+            "time": "1-00:00:00",
         }
 
     def construct(self, builder: Task):
@@ -854,6 +1242,8 @@ class PerturbedModel(Artifact):
             base_subfolder = "PretrainedModel"
         elif isinstance(self.base_model, AnnealedModel):
             base_subfolder = "AnnealedModel"
+        elif isinstance(self.base_model, MidtrainedModel):
+            base_subfolder = "MidtrainedModel"
         else:
             raise TypeError(f"Unsupported base model type: {type(self.base_model)}")
 
@@ -877,7 +1267,7 @@ class PerturbedModel(Artifact):
 
 @dataclass(frozen=True)
 class ModelEvaluation(Artifact):
-    model: "PretrainedModel | CPTModel | AnnealedModel | PerturbedModel"
+    model: "PretrainedModel | CPTModel | AnnealedModel | PerturbedModel | MidtrainedModel"
     device: str = 'cuda'
     chunk_size: int = 1024
     hf_model: bool = False
@@ -902,18 +1292,7 @@ class ModelEvaluation(Artifact):
         # return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {
-            "gres": f"gpu:2",
-            "nodes": 1,
-            "cpus": 4,
-            "mem": '64GB',
-            "requeue": True,
-            "partition": 'flame',
-            "qos": 'flame-16gpu-c_qos',
-            "account": 'aditirag',
-            "time": "12-00:00:00"
-        }
-        # return {'gpus': 1, 'nodes': 1, 'cpus': 4, 'mem': '64GB', 'partition': 'preempt', 'time': "1-00:00:00"}
+        return {'gpus': 1, 'nodes': 1, 'cpus-per-task': 4, 'mem': '256GB', 'partition': 'general', 'time': "1-00:00:00"}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
@@ -959,7 +1338,7 @@ class ModelEvaluation(Artifact):
         ]
         if any(target_masks):
             cmd.append(f"--mask_path {','.join(target_masks)}")
-        if self.model.pretrain_dataset == "dclm":
+        if self.model.pretrain_dataset == "dclm" or self.model.pretrain_dataset == "dolmino":
             cmd.append(f"--dtype=uint32")
         if self.hf_model:
             cmd.append("--hf_model")
@@ -969,12 +1348,117 @@ class ModelEvaluation(Artifact):
         builder.run_command(' '.join(cmd))
         builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluation'), delete=False, checksum=False, contents=True)
 
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class ModelEvaluationDownstream(Artifact):
+    """
+    Evaluate a model on downstream (in-context learning) tasks such as
+    piqa, hellaswag, winogrande, etc.
+    """
+    model: "PerturbedModel | MidtrainedModel"
+    tasks: tuple  = ('winogrande', 'mmlu_other_var', 'sciq', 'hellaswag', 'copa', 'openbook_qa')
+    # tasks: tuple = ('winogrande', )
+    device: str = 'cuda'
+    batch_size: int = 8
+    subset_num_batches: int = 0
+    hf_model: bool = False
+    quant_bit: int = None
+    seed: int = 42
+
+    @property
+    def relpath(self) -> str:
+        if self.quant_bit is not None:
+            assert self.hf_model
+            return f'ModelEvaluationDownstream/{self.model.run_name}-quant-{self.quant_bit}bit-downstream-eval.json'
+        else:
+            return f'ModelEvaluationDownstream/{self.model.run_name}-downstream-eval.json'
+
+    @property
+    def exists(self) -> bool:
+        return False
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
+        remote_files = G.get_remote_files(subfolder='ModelEvaluationDownstream')
+        found = any(f.startswith(remote_path) for f in remote_files)
+        return found
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {
+            'gpus': 1,
+            'nodes': 1,
+            'cpus-per-task': 4,
+            'mem': '128GB',
+            'partition': 'general',
+            'time': '1-00:00:00',
+        }
+
+    def construct(self, builder: Task):
+        local_root = G.get_random_local_path()
+        local_output = os.path.join(local_root, self.relpath)
+        builder.ensure_directory(os.path.dirname(local_output))
+
+        # 1. Fetch Model checkpoint
+        local_model = os.path.join(local_root, self.model.checkpoint_relpath)
+        builder.rsync_from_gs(
+            os.path.join(cast(str, Project.config.GS_PATH), self.model.checkpoint_relpath),
+            local_model,
+            delete=False,
+            checksum=False,
+            skip_existing=False,
+            check_exists=True,
+            contents=True,
+        )
+
+        # 2. Determine tokenizer path
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+
+        # 3. Run downstream evaluation script
+        eval_script = os.path.join(olmo_path, "new_utils", "evaluate_downstream.py")
+        tasks_str = ",".join(self.tasks)
+        cmd = [
+            "python", eval_script,
+            f"--model_path {local_model}",
+            f"--tasks {tasks_str}",
+            f"--output_path {local_output}",
+            f"--device {self.device}",
+            f"--batch_size {self.batch_size}",
+            f"--seed {self.seed}",
+        ]
+        if self.hf_model:
+            cmd.append("--hf_model")
+            cmd.append(f"--tokenizer {local_model}")
+            if self.quant_bit is not None:
+                cmd.append(f"--quantize={self.quant_bit}")
+        if self.subset_num_batches > 0:
+            cmd.append(f"--subset_num_batches {self.subset_num_batches}")
+
+        builder.run_command(" ".join(cmd))
+
+        # 4. Upload results to GS
+        builder.rsync_to_gs(
+            os.path.dirname(local_output),
+            os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluationDownstream'),
+            delete=False,
+            checksum=False,
+            contents=True,
+        )
+
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
+
+
 @dataclass(frozen=True)
 class HFModel(Artifact):
     """
     Convert a `PretrainedModel` checkpoint to a HuggingFace-compatible format and upload to GS.
     """
-    pretrained_model: PretrainedModel | AnnealedModel
+    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel
 
     @property
     def run_name(self) -> str:
@@ -995,7 +1479,12 @@ class HFModel(Artifact):
         return self.pretrained_model.pretrain_dataset
 
     @property
+    def seed(self) -> int:
+        return self.pretrained_model.seed
+
+    @property
     def exists(self) -> bool:
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
 
@@ -1010,8 +1499,8 @@ class HFModel(Artifact):
             "gpus": 1,
             "nodes": 1,
             "cpus-per-task": 4,
-            "mem": "64GB",
-            "partition": "preempt",
+            "mem": "256GB",
+            "partition": "general",
             "time": "1-00:00:00",
         }
 
@@ -1038,11 +1527,12 @@ class HFModel(Artifact):
 
         # 3. Run the HF conversion script with the appropriate tokenizer.
         olmo_path = cast(str, Project.config.OLMO_PATH)
-        convert_script = os.path.join(olmo_path, "hf_olmo", "convert_olmo_to_hf.py")
+        # convert_script = os.path.join(olmo_path, "hf_olmo", "convert_olmo_to_hf.py")
+        convert_script = os.path.join(olmo_path, "scripts", "convert_olmo2_to_hf.py")
 
         # Select tokenizer JSON based on the pretrain dataset.
         tokenizer_dir = os.path.join(olmo_path, "olmo_data", "tokenizers")
-        if self.pretrain_dataset == "dclm":
+        if self.pretrain_dataset == "dclm" or self.pretrain_dataset == "dolmino":
             tokenizer_file = "allenai_dolma2.json"
         else:
             tokenizer_file = "allenai_gpt-neox-olmo-dolma-v1_5.json"
@@ -1051,16 +1541,23 @@ class HFModel(Artifact):
         cmd_parts = [
             "python",
             convert_script,
-            f"--checkpoint-dir {local_ckpt_dir}",
-            f"--destination-dir {save_folder}",
-            f"--tokenizer {tokenizer_path}",
-            "--keep-olmo-artifacts"
+            f"--input_dir {local_ckpt_dir}",
+            f"--output_dir {save_folder}",
+            f"--tokenizer_json_path {tokenizer_path}",
+            # f"--checkpoint-dir {local_ckpt_dir}",
+            # f"--destination-dir {save_folder}",
+            # f"--tokenizer {tokenizer_path}",
+            # "--keep-olmo-artifacts"
         ]
         builder.run_command(" ".join(cmd_parts))
 
         # 4. Upload the converted HF model back to GS.
         remote_folder = os.path.join(gs_root, self.relpath)
         builder.upload_to_gs(save_folder, remote_folder, directory=True)
+
+        # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
 
 
 # @dataclass(frozen=True)

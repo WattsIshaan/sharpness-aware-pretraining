@@ -23,7 +23,15 @@ CPT_DATASET_MAP = {
     "tulu": "Tulu",
     "gsm8k": "GSM8K",
     "siqa": "SIQA",
-    "stackmathqa": "StackMathQA"
+    "stackmathqa": "StackMathQA",
+}
+DOWNSTREAM_TASK_MAP = {
+    "winogrande": "Winogrande",
+    "mmlu": "MMLU",
+    "sciq": "SciQ",
+    "hellaswag": "HellaSwag",
+    "copa": "COPA",
+    "openbook_qa": "OpenBookQA",
 }
 
 XLABEL = {
