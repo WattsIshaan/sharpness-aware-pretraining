@@ -903,9 +903,10 @@ class AnnealedModel2(Artifact):
             "cpus": self.anneal_gpus * 2,
             "mem": '64GB',
             "requeue": True,
-            # "partition": 'preempt',
-            "partition": 'general',
-            "time": "2-00:00:00"
+            'partition': 'flame',
+            'account': 'aditirag',
+            'qos': 'flame-32gpu_qos',
+            'time': '4-00:00:00',
         }
 
     def construct(self, builder: Task):
@@ -957,7 +958,7 @@ class AnnealedModel2(Artifact):
             muon_weight_decay=self.pretrained_model.muon_weight_decay,
             sam_rho=self.pretrained_model.sam_rho,
             sam_base_optimizer=self.pretrained_model.sam_base_optimizer,
-            max_duration=f"{self.train_tokens}e9T",
+            max_duration=f"{self.pt_token}e9T",
             stop_at=None,
             seed=6198,
             model_overrides=model_overrides,
@@ -965,7 +966,7 @@ class AnnealedModel2(Artifact):
             scheduler_t_warmup=WARMUP_STEPS[int(self.model_size[:-1])],
             scheduler_anneal_begin=self.pretrain_ckpt_step,
             global_train_batch_size=self.pretrained_model.batch_size,
-            device_train_microbatch_size=4,
+            device_train_microbatch_size=16,
             eval_interval=20000,
             save_interval_unsharded=5000,
             wandb_project=cast(str, G.PROJECT_NAME),
@@ -1358,7 +1359,7 @@ class ModelEvaluationDownstream(Artifact):
     """
     Evaluate an HFModel on downstream tasks using the olmes evaluation framework.
     """
-    model: "HFModel"
+    model: "HFModel | SFTModel"
     tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
     batch_size: int = 8
     load_in_4bit: bool = False
@@ -1593,6 +1594,7 @@ class SFTModel(Artifact):
     seed: int = 1
     dataset_mixer: tuple = ('allenai/tulu-3-sft-olmo-2-mixture-0225', '1.0')
     add_bos: bool = True
+    chat_template_name: str = 'tulu'
 
     @property
     def run_name(self) -> str:
@@ -1619,12 +1621,14 @@ class SFTModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            'gpus-per-node': f'H100:{self.sft_gpus}',
+            'gres': f'gpu:{self.sft_gpus}',
             'nodes': 1,
-            'cpus-per-task': self.sft_gpus * 2,
-            'mem': '64GB',
+            'cpus': self.sft_gpus * 2,
+            'mem': '256GB',
             'requeue': True,
-            'partition': 'general',
+            'partition': 'flame',
+            'account': 'aditirag',
+            'qos': 'flame-32gpu_qos',
             'time': '2-00:00:00',
         }
 
@@ -1654,12 +1658,48 @@ class SFTModel(Artifact):
 
         dataset_mixer_str = ' '.join(self.dataset_mixer)
 
+        dataset_cache_dir = os.path.join(local_root, "dataset_cache")
+
+        # Pre-cache dataset in single process to avoid NCCL barrier timeout.
+        # After pre-caching, extract the config hash from the cache directory
+        # and pass it to the multi-GPU run to guarantee it uses the same cache
+        # (avoids hash mismatch due to dataset_commit_hash resolution timing).
+        precache_parts = [
+            'source ~/open-instruct/.venv/bin/activate &&',
+            f'export HF_HOME={G.LOCAL_HF_PATH} &&',
+            f'export TRITON_CACHE_DIR=/tmp/iwatts/triton && mkdir -p /tmp/iwatts/triton &&',
+            f'cd {open_instruct_path} &&',
+            f'python {finetune_script}',
+            f'--model_name_or_path {local_model_path}',
+            f'--dataset_mixer_list {dataset_mixer_str}',
+            f'--max_seq_length {self.max_seq_length}',
+            f'--dataset_local_cache_dir {dataset_cache_dir}',
+            '--cache_dataset_only',
+            '--no_push_to_hub',
+            '--no_try_launch_beaker_eval_jobs',
+        ]
+        if self.add_bos:
+            precache_parts.append('--add_bos')
+        if self.chat_template_name:
+            precache_parts.append(f'--chat_template_name {self.chat_template_name}')
+        hash_file = os.path.join(local_root, "dataset_config_hash.txt")
+        # After pre-cache completes, save the config hash from the cache directory
+        precache_parts.append(
+            f'&& ls -1 {dataset_cache_dir}/ | head -1 > {hash_file}'
+            f' && echo "Saved dataset config hash: $(cat {hash_file})"'
+        )
+        builder.run_command(' '.join(precache_parts))
+
         cmd_parts = [
-            'source ~/miniconda3/etc/profile.d/conda.sh && conda activate oi &&',
+            'source ~/open-instruct/.venv/bin/activate &&',
+            f'export HF_HOME={G.LOCAL_HF_PATH} &&',
+            f'export TRITON_CACHE_DIR=/tmp/iwatts/triton && mkdir -p /tmp/iwatts/triton &&',
             f'cd {open_instruct_path} &&',
             'accelerate launch',
             '--mixed_precision bf16',
             f'--num_processes {self.sft_gpus}',
+            '--num_machines 1',
+            '--dynamo_backend no',
             '--use_deepspeed',
             f'--deepspeed_config_file {ds_config}',
             '--deepspeed_multinode_launcher standard',
@@ -1686,10 +1726,16 @@ class SFTModel(Artifact):
             '--do_not_randomize_output_dir',
             '--no_push_to_hub',
             '--no_try_launch_beaker_eval_jobs',
+            f'--dataset_local_cache_dir {dataset_cache_dir}',
+            f'--dataset_config_hash $(cat {hash_file})',
+            '--timeout 7200',
         ]
 
         if self.add_bos:
             cmd_parts.append('--add_bos')
+
+        if self.chat_template_name:
+            cmd_parts.append(f'--chat_template_name {self.chat_template_name}')
 
         builder.run_command(' '.join(cmd_parts))
 
