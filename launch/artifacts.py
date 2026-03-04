@@ -1356,30 +1356,29 @@ class ModelEvaluation(Artifact):
 @dataclass(frozen=True)
 class ModelEvaluationDownstream(Artifact):
     """
-    Evaluate a model on downstream (in-context learning) tasks such as
-    piqa, hellaswag, winogrande, etc.
+    Evaluate an HFModel on downstream tasks using the olmes evaluation framework.
     """
-    model: "PerturbedModel | MidtrainedModel"
-    tasks: tuple  = ('winogrande', 'mmlu_other_var', 'sciq', 'hellaswag', 'copa', 'openbook_qa')
-    # tasks: tuple = ('winogrande', )
-    device: str = 'cuda'
+    model: "HFModel"
+    tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
     batch_size: int = 8
-    subset_num_batches: int = 0
-    hf_model: bool = False
-    quant_bit: int = None
-    seed: int = 42
+    load_in_4bit: bool = False
+    load_in_8bit: bool = False
+
+    @property
+    def run_name(self) -> str:
+        name = self.model.run_name
+        if self.load_in_4bit:
+            name += '-4bit'
+        elif self.load_in_8bit:
+            name += '-8bit'
+        return name
 
     @property
     def relpath(self) -> str:
-        if self.quant_bit is not None:
-            assert self.hf_model
-            return f'ModelEvaluationDownstream/{self.model.run_name}-quant-{self.quant_bit}bit-downstream-eval.json'
-        else:
-            return f'ModelEvaluationDownstream/{self.model.run_name}-downstream-eval.json'
+        return f'ModelEvaluationDownstream/{self.run_name}-downstream-eval.jsonl'
 
     @property
     def exists(self) -> bool:
-        return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
@@ -1399,14 +1398,16 @@ class ModelEvaluationDownstream(Artifact):
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
+        gs_root = cast(str, Project.config.GS_PATH)
         local_output = os.path.join(local_root, self.relpath)
         builder.ensure_directory(os.path.dirname(local_output))
 
-        # 1. Fetch Model checkpoint
-        local_model = os.path.join(local_root, self.model.checkpoint_relpath)
+        # 1. Download HFModel checkpoint locally
+        src_ckpt_rel = self.model.checkpoint_relpath
+        local_model_path = os.path.join(local_root, src_ckpt_rel)
         builder.rsync_from_gs(
-            os.path.join(cast(str, Project.config.GS_PATH), self.model.checkpoint_relpath),
-            local_model,
+            os.path.join(gs_root, src_ckpt_rel),
+            local_model_path,
             delete=False,
             checksum=False,
             skip_existing=False,
@@ -1414,35 +1415,42 @@ class ModelEvaluationDownstream(Artifact):
             contents=True,
         )
 
-        # 2. Determine tokenizer path
-        olmo_path = cast(str, Project.config.OLMO_PATH)
+        # 2. Build olmes evaluation command
+        olmes_output_dir = os.path.join(local_root, 'olmes_output')
+        builder.ensure_directory(olmes_output_dir)
 
-        # 3. Run downstream evaluation script
-        eval_script = os.path.join(olmo_path, "new_utils", "evaluate_downstream.py")
-        tasks_str = ",".join(self.tasks)
-        cmd = [
-            "python", eval_script,
-            f"--model_path {local_model}",
-            f"--tasks {tasks_str}",
-            f"--output_path {local_output}",
-            f"--device {self.device}",
-            f"--batch_size {self.batch_size}",
-            f"--seed {self.seed}",
+        # Build model-args string for olmes
+        model_args_parts = [
+            f'model_path={local_model_path}',
         ]
-        if self.hf_model:
-            cmd.append("--hf_model")
-            cmd.append(f"--tokenizer {local_model}")
-            if self.quant_bit is not None:
-                cmd.append(f"--quantize={self.quant_bit}")
-        if self.subset_num_batches > 0:
-            cmd.append(f"--subset_num_batches {self.subset_num_batches}")
+        if self.load_in_4bit:
+            model_args_parts.append('load_in_4bit=true')
+        if self.load_in_8bit:
+            model_args_parts.append('load_in_8bit=true')
 
-        builder.run_command(" ".join(cmd))
+        model_args_str = ','.join(model_args_parts)
+        tasks_str = ' '.join(self.tasks)
+
+        cmd_parts = [
+            'source ~/miniconda3/etc/profile.d/conda.sh && conda activate olmes &&',
+            'olmes',
+            f'--model olmo-2-1b-0425-iwatts',
+            f'--model-args "{model_args_str}"',
+            f'--task {tasks_str}',
+            f'--output-dir {olmes_output_dir}',
+            f'--batch-size {self.batch_size}',
+            '--gpus 1',
+        ]
+        builder.run_command(' '.join(cmd_parts))
+
+        # 3. Copy metrics-all.jsonl to the expected output location
+        metrics_src = os.path.join(olmes_output_dir, 'metrics-all.jsonl')
+        builder.run_command(f'cp {metrics_src} {local_output}')
 
         # 4. Upload results to GS
         builder.rsync_to_gs(
             os.path.dirname(local_output),
-            os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluationDownstream'),
+            os.path.join(gs_root, 'ModelEvaluationDownstream'),
             delete=False,
             checksum=False,
             contents=True,
@@ -1556,6 +1564,132 @@ class HFModel(Artifact):
         builder.upload_to_gs(save_folder, remote_folder, directory=True)
 
         # Cleanup local directory
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class SFTModel(Artifact):
+    """
+    Supervised Fine-Tuning of an HFModel using open-instruct's finetune.py.
+    """
+    hf_model: HFModel
+    learning_rate: float = 3e-5
+    weight_decay: float = 0.0
+    num_train_epochs: int = 2
+    per_device_train_batch_size: int = 2
+    gradient_accumulation_steps: int = 8
+    max_seq_length: int = 2048
+    lr_scheduler_type: str = 'linear'
+    warmup_ratio: float = 0.03
+    sft_gpus: int = 8
+    seed: int = 1
+    dataset_mixer: tuple = ('allenai/tulu-3-sft-olmo-2-mixture-0225', '1.0')
+    add_bos: bool = True
+
+    @property
+    def run_name(self) -> str:
+        lr_str = f'{self.learning_rate:.0e}'.replace('e-0', 'e-')
+        return f'{self.hf_model.pretrained_model.run_name}-SFT-lr{lr_str}'
+
+    @property
+    def relpath(self) -> str:
+        return f'SFTModel/{self.run_name}'
+
+    @property
+    def checkpoint_relpath(self) -> str:
+        return self.relpath
+
+    @property
+    def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
+        remote_files = G.get_remote_files(subfolder='SFTModel')
+        found = any(f.startswith(remote_path) for f in remote_files)
+        log.info(f"[SFTModel] {'✓ EXISTS' if found else '❌ NOT found'}: {self.run_name}")
+        return found
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {
+            'gpus-per-node': f'H100:{self.sft_gpus}',
+            'nodes': 1,
+            'cpus-per-task': self.sft_gpus * 2,
+            'mem': '64GB',
+            'requeue': True,
+            'partition': 'general',
+            'time': '2-00:00:00',
+        }
+
+    def construct(self, builder: Task):
+        local_root = G.get_random_local_path()
+        gs_root = cast(str, Project.config.GS_PATH)
+
+        # 1. Download HFModel checkpoint locally
+        src_ckpt_rel = self.hf_model.checkpoint_relpath
+        local_model_path = os.path.join(local_root, src_ckpt_rel)
+        builder.rsync_from_gs(
+            os.path.join(gs_root, src_ckpt_rel),
+            local_model_path,
+            delete=False, checksum=False, skip_existing=False,
+            check_exists=True, contents=True,
+        )
+
+        # 2. Prepare output directory
+        save_folder = os.path.join(local_root, self.relpath)
+        remote_folder = os.path.join(gs_root, self.relpath)
+        builder.ensure_directory(save_folder)
+
+        # 3. Build accelerate launch command
+        open_instruct_path = os.path.expanduser('~/open-instruct')
+        ds_config = 'configs/ds_configs/stage3_no_offloading_accelerate.conf'
+        finetune_script = 'open_instruct/finetune.py'
+
+        dataset_mixer_str = ' '.join(self.dataset_mixer)
+
+        cmd_parts = [
+            'source ~/miniconda3/etc/profile.d/conda.sh && conda activate oi &&',
+            f'cd {open_instruct_path} &&',
+            'accelerate launch',
+            '--mixed_precision bf16',
+            f'--num_processes {self.sft_gpus}',
+            '--use_deepspeed',
+            f'--deepspeed_config_file {ds_config}',
+            '--deepspeed_multinode_launcher standard',
+            finetune_script,
+            f'--exp_name {self.run_name}',
+            f'--model_name_or_path {local_model_path}',
+            f'--dataset_mixer_list {dataset_mixer_str}',
+            '--use_flash_attn',
+            f'--max_seq_length {self.max_seq_length}',
+            f'--per_device_train_batch_size {self.per_device_train_batch_size}',
+            f'--gradient_accumulation_steps {self.gradient_accumulation_steps}',
+            f'--learning_rate {self.learning_rate}',
+            f'--lr_scheduler_type {self.lr_scheduler_type}',
+            f'--warmup_ratio {self.warmup_ratio}',
+            f'--weight_decay {self.weight_decay}',
+            f'--num_train_epochs {self.num_train_epochs}',
+            '--report_to wandb',
+            '--with_tracking',
+            '--logging_steps 1',
+            f'--wandb_project_name {cast(str, G.PROJECT_NAME)}',
+            f'--wandb_entity {cast(str, G.WANDB_ENTITY)}',
+            f'--output_dir {save_folder}',
+            f'--seed {self.seed}',
+            '--do_not_randomize_output_dir',
+            '--no_push_to_hub',
+            '--no_try_launch_beaker_eval_jobs',
+        ]
+
+        if self.add_bos:
+            cmd_parts.append('--add_bos')
+
+        builder.run_command(' '.join(cmd_parts))
+
+        # 4. Upload to GCS
+        builder.upload_to_gs(save_folder, remote_folder, directory=True)
+
+        # Cleanup
         log.info(f"Cleaning up local directory: {local_root}")
         shutil.rmtree(local_root, ignore_errors=True)
 
