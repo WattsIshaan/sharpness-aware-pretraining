@@ -1535,9 +1535,7 @@ class HFModel(Artifact):
 
         # 3. Run the HF conversion script with the appropriate tokenizer.
         olmo_path = cast(str, Project.config.OLMO_PATH)
-        # convert_script = os.path.join(olmo_path, "hf_olmo", "convert_olmo_to_hf.py")
-        convert_script = os.path.join(olmo_path, "scripts", "convert_olmo2_to_hf.py")
-
+        
         # Select tokenizer JSON based on the pretrain dataset.
         tokenizer_dir = os.path.join(olmo_path, "olmo_data", "tokenizers")
         if self.pretrain_dataset == "dclm" or self.pretrain_dataset == "dolmino":
@@ -1546,17 +1544,26 @@ class HFModel(Artifact):
             tokenizer_file = "allenai_gpt-neox-olmo-dolma-v1_5.json"
         tokenizer_path = os.path.join(tokenizer_dir, tokenizer_file)
 
-        cmd_parts = [
-            "python",
-            convert_script,
-            f"--input_dir {local_ckpt_dir}",
-            f"--output_dir {save_folder}",
-            f"--tokenizer_json_path {tokenizer_path}",
-            # f"--checkpoint-dir {local_ckpt_dir}",
-            # f"--destination-dir {save_folder}",
-            # f"--tokenizer {tokenizer_path}",
-            # "--keep-olmo-artifacts"
-        ]
+        if isinstance(self.pretrained_model, MidtrainedModel):
+            convert_script = os.path.join(olmo_path, "scripts", "convert_olmo2_to_hf.py")
+            cmd_parts = [
+                "python",
+                convert_script,
+                f"--input_dir {local_ckpt_dir}",
+                f"--output_dir {save_folder}",
+                f"--tokenizer_json_path {tokenizer_path}",
+            ]
+        else:
+            convert_script = os.path.join(olmo_path, "hf_olmo", "convert_olmo_to_hf.py")
+            cmd_parts = [
+                "python",
+                convert_script,
+                f"--checkpoint-dir {local_ckpt_dir}",
+                f"--destination-dir {save_folder}",
+                f"--tokenizer {tokenizer_path}",
+                "--keep-olmo-artifacts"
+            ]
+        
         builder.run_command(" ".join(cmd_parts))
 
         # 4. Upload the converted HF model back to GS.
