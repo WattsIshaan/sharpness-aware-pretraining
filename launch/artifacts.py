@@ -471,6 +471,8 @@ class MidtrainedModel(Artifact):
     sam_rho: float = 0.05
     load_path: str = 'PretrainedModel/OLMo2-1b-tk4T-adamw/final-unsharded'
     midtrain_gpus: int = 8
+    global_train_batch_size: int = 1024
+    midtrain_tokens: int = 5
     seed: int = 42
     per_device_train_batch_size: int = 8
 
@@ -480,9 +482,10 @@ class MidtrainedModel(Artifact):
 
     @property
     def run_name(self) -> str:
-        name = f'OLMo2-1b-tk4T-adamw-Midtrain-50B-{self.optimizer}'
+        name = f'OLMo2-1b-tk4T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
         if self.optimizer == "sam":
             name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
+        name += f'-bs{self.global_train_batch_size}'
         return name
 
     @property
@@ -506,15 +509,15 @@ class MidtrainedModel(Artifact):
 
     def get_requirements(self) -> Dict[str, Any]:
         return {
-            "gpus-per-node": "H100:8",
+            "gpus": self.midtrain_gpus,
             "nodes": 1,
-            "cpus-per-task": 96,
-            "mem": '2000000M',
+            "cpus": self.midtrain_gpus * 2,
+            "mem": '256GB',
             "requeue": True,
-            "partition": 'flame-earlybirds',
-            "qos": 'earlybird_qos',
+            "partition": 'flame',
+            "qos": 'flame-32gpu_qos',
             "account": 'aditirag',
-            "time": "2-00:00:00"
+            "time": "5-00:00:00"
         }
 
     def construct(self, builder: Task):
@@ -558,13 +561,13 @@ class MidtrainedModel(Artifact):
             weight_decay=0.1,
             optimizer_eps=1e-8,
             decay_embeddings=False,
-            max_duration='50e9T',
-            stop_at=23852,
+            max_duration=f'{self.midtrain_tokens}e9T',
+            # stop_at=23852,
             seed=self.seed,
             scheduler_name='linear_with_warmup',
             scheduler_t_warmup=0,
             scheduler_alpha_f=0.0,
-            global_train_batch_size=1024,
+            global_train_batch_size=self.global_train_batch_size,
             device_train_microbatch_size=self.per_device_train_batch_size,
             device_eval_batch_size=8,
             eval_interval=1000,
