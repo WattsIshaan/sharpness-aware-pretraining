@@ -890,7 +890,11 @@ class Trainer:
         ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=isinstance(self.optim, SAM))
 
         if isinstance(self.optim, SAM):
-            self.optim.first_step(zero_grad=True)
+            new_rho = self.cfg.optimizer.sam_rho
+            if self.cfg.optimizer.anneal_sam:
+                new_rho = self.scheduler.get_rho(self.cfg.optimizer.sam_rho, self.scheduler_current, self.scheduler_max)
+            self.optim.first_step(zero_grad=True, rho=new_rho)
+            logging.info(f"Sam rho: {new_rho}")
             ce_batch_loss_sam, z_batch_loss_sam = self.train_batch(batch)
             self.optim.restore_original_params()
 

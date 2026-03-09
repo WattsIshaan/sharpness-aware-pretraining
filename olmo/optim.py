@@ -798,11 +798,11 @@ class SAM(Optimizer):
         return total.sqrt()
 
     @torch.no_grad()
-    def first_step(self, zero_grad: bool = False):
+    def first_step(self, zero_grad: bool = False, rho: float = 0.05):
         grad_norm = self._grad_norm()
         if not torch.isfinite(grad_norm):
             return
-        scale = self._rho / (grad_norm + 1e-12)
+        scale = rho / (grad_norm + 1e-12)
         for group in self.param_groups:
             for param in group["params"]:
                 grad = param.grad
@@ -1777,6 +1777,18 @@ class LinearWithWarmup(Scheduler):
             max_steps = max_steps - self.warmup_steps
             return initial_lr - (initial_lr - eta_min) * (step / max_steps)
 
+    def get_rho(self, initial_rho: float, step: int, max_steps: int) -> float:
+        max_steps = max_steps if self.t_max is None else self.t_max
+        rho_min = 0
+        if step < self.warmup_steps:
+            return self._linear_warmup(initial_rho, step, self.warmup_steps)
+        elif step >= max_steps:
+            return rho_min
+        else:
+            step = step - self.warmup_steps
+            max_steps = max_steps - self.warmup_steps
+            return initial_rho - (initial_rho - rho_min) * (step / max_steps)
+            
 @dataclass
 class WSD(Scheduler):
     warmup_steps: int

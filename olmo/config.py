@@ -514,6 +514,7 @@ class OptimizerConfig(BaseConfig):
     betas: Tuple[float, float] = (0.9, 0.95)
     eps: float = 1e-5
     sam_rho: float = 0.05
+    anneal_sam: bool = False
     momentum: float = 0.9
     sam_base_optimizer: str = 'adamw'
     muon_learning_rate: float = 5e-2 #EDIT

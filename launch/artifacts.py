@@ -475,6 +475,7 @@ class MidtrainedModel(Artifact):
     midtrain_tokens: int = 5
     seed: int = 42
     per_device_train_batch_size: int = 8
+    anneal_sam: bool = False
 
     @property
     def relpath(self) -> str:
@@ -485,6 +486,8 @@ class MidtrainedModel(Artifact):
         name = f'OLMo2-1b-tk4T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
         if self.optimizer == "sam":
             name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
+            if self.anneal_sam:
+                name += '-anneal'
         name += f'-bs{self.global_train_batch_size}'
         return name
 
@@ -577,6 +580,7 @@ class MidtrainedModel(Artifact):
             restore_dataloader=False,
             reset_optimizer_state=False,
             max_grad_norm=1.0,
+            anneal_sam=self.anneal_sam,
             wandb_project=cast(str, G.PROJECT_NAME),
             wandb_entity=cast(str, G.WANDB_ENTITY),
             wandb_id=self.run_name,

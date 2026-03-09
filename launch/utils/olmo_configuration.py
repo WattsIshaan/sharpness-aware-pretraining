@@ -201,6 +201,7 @@ def get_train_config(
     optimizer_eps=1e-8,
     decay_embeddings=True,
     muon_learning_rate=5e-2, #EDIT
+    anneal_sam=False,
     muon_momentum=0.95,
     muon_weight_decay=0.02,
     global_train_batch_size=256,
@@ -313,6 +314,7 @@ def get_train_config(
             'momentum': momentum,
             'sam_rho': sam_rho,
             'sam_base_optimizer': sam_base_optimizer,
+            'anneal_sam': anneal_sam,
             'muon_learning_rate': muon_learning_rate, #EDIT
             'muon_momentum': muon_momentum,
             'muon_weight_decay': muon_weight_decay,
