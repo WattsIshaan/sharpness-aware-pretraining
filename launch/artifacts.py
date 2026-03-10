@@ -1035,7 +1035,7 @@ class AnnealedModel2(Artifact):
 @dataclass(frozen=True)
 class CPTModel(Artifact):
     train_tokens: int
-    pretrained_model: PretrainedModel | AnnealedModel
+    pretrained_model: PretrainedModel | AnnealedModel | AnnealedModel2
     cpt_dataset: str
     optimizer: str = 'adamw'
     learning_rate: float = 6e-4
@@ -1201,7 +1201,7 @@ class CPTModel(Artifact):
 
 @dataclass(frozen=True)
 class PerturbedModel(Artifact):
-    base_model: "PretrainedModel | AnnealedModel | MidtrainedModel"
+    base_model: "PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2"
     sigma: float
     seed: int = 64
     device: str = "cpu"
@@ -1252,7 +1252,7 @@ class PerturbedModel(Artifact):
         gs_root = cast(str, Project.config.GS_PATH)
         if isinstance(self.base_model, PretrainedModel):
             base_subfolder = "PretrainedModel"
-        elif isinstance(self.base_model, AnnealedModel):
+        elif isinstance(self.base_model, AnnealedModel) or isinstance(self.base_model, AnnealedModel2):
             base_subfolder = "AnnealedModel"
         elif isinstance(self.base_model, MidtrainedModel):
             base_subfolder = "MidtrainedModel"
@@ -1279,7 +1279,7 @@ class PerturbedModel(Artifact):
 
 @dataclass(frozen=True)
 class ModelEvaluation(Artifact):
-    model: "PretrainedModel | CPTModel | AnnealedModel | PerturbedModel | MidtrainedModel"
+    model: "PretrainedModel | CPTModel | AnnealedModel | PerturbedModel | MidtrainedModel | AnnealedModel2"
     device: str = 'cuda'
     chunk_size: int = 1024
     hf_model: bool = False
@@ -1375,6 +1375,7 @@ class ModelEvaluationDownstream(Artifact):
     batch_size: int = 8
     load_in_4bit: bool = False
     load_in_8bit: bool = False
+    gpu_count: int = 1
 
     @property
     def run_name(self) -> str:
@@ -1428,7 +1429,7 @@ class ModelEvaluationDownstream(Artifact):
         )
 
         # 2. Build olmes evaluation command
-        olmes_output_dir = os.path.join(local_root, 'olmes_output')
+        olmes_output_dir = os.path.join(local_root, f'{self.run_name}_output')
         builder.ensure_directory(olmes_output_dir)
 
         # Build model-args string for olmes
@@ -1451,7 +1452,7 @@ class ModelEvaluationDownstream(Artifact):
             f'--task {tasks_str}',
             f'--output-dir {olmes_output_dir}',
             f'--batch-size {self.batch_size}',
-            '--gpus 1',
+            f'--gpus {self.gpu_count}',
         ]
         builder.run_command(' '.join(cmd_parts))
 
@@ -1469,8 +1470,8 @@ class ModelEvaluationDownstream(Artifact):
         )
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_root}")
-        shutil.rmtree(local_root, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_root}")
+        # shutil.rmtree(local_root, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1478,7 +1479,7 @@ class HFModel(Artifact):
     """
     Convert a `PretrainedModel` checkpoint to a HuggingFace-compatible format and upload to GS.
     """
-    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel
+    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2
 
     @property
     def run_name(self) -> str:

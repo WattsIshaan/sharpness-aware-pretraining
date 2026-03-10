@@ -109,6 +109,8 @@ def main(midtrain: bool = False):
                             anneal_match = "both"
                     assert token is not None, f"Unable to find ckpt {ckpt_match.group(1)} in CHECKPOINT_MAP for {fname}"
 
+                    if int(ckpt_match.group(1)) in [695000, 660000, 585000, 365000, 0]:
+                        pt_lrs = "wsd2"
                     
                 except Exception as e:
                     print(f"Skipping ckpt {ckpt_match.group(1)} {e} in {fname}")
@@ -313,7 +315,7 @@ def main(midtrain: bool = False):
             run_info["cpt_tokens"] = cpt_tokens
             run_info["cpt_bs"] = cpt_bs
             run_info[f"{cpt_dataset}_val"] = data[TASKNAME_MAP[f"{cpt_dataset}_val"]]
-        if pt_lrs == "wsd":
+        if pt_lrs in ("wsd", "wsd2"):
             run_info["anneal_percent"] = anneal_percent
             run_info["anneal_optim"] = anneal_optim
             run_info["anneal_match"] = anneal_match

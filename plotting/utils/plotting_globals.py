@@ -80,3 +80,47 @@ LRS_MAP = {
     "cosine_sam": "Cosine (SAM)",
 }
 
+# ---------------------------------------------------------------------------
+# Midtrain – Base Model eval task display names
+# ---------------------------------------------------------------------------
+BASE_EVAL_TASK_MAP = {
+    "arc_challenge": "ARC-C",
+    "boolq": "BoolQ",
+    "hellaswag": "HellaSwag",
+    "mmlu": "MMLU",
+    "winogrande": "Winogrande",
+    "drop": "DROP",
+    "naturalqs_open": "NQ Open",
+    "agi_eval_english": "AGIEval",
+    "gsm8k": "GSM8K",
+    "mmlu_pro": "MMLU-Pro",
+    "triviaqa": "TriviaQA",
+}
+
+# ---------------------------------------------------------------------------
+# Midtrain – SFT Model eval task display names
+# ---------------------------------------------------------------------------
+SFT_EVAL_TASK_MAP = {
+    "mmlu": "MMLU",
+    "popqa": "PopQA",
+    "truthfulqa": "TruthfulQA",
+    "bbh": "BBH",
+    "minerva_math": "Minerva Math",
+    "drop": "DROP",
+    "gsm8k": "GSM8K",
+    "codex_humaneval": "HumanEval",
+    "codex_humanevalplus": "HumanEval+",
+    "ifeval": "IFEval",
+}
+
+# ---------------------------------------------------------------------------
+# Midtrain – Model display names
+# ---------------------------------------------------------------------------
+MIDTRAIN_MODEL_MAP = {
+    "olmo_base": "OLMo Base",
+    "adamw": "AdamW",
+    "sam": "SAM",
+    "adamw_4bit": "AdamW 4-bit",
+    "sam_4bit": "SAM 4-bit",
+    "olmo_sft": "OLMo-SFT",
+}
