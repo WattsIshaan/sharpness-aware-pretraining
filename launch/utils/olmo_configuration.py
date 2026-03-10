@@ -203,6 +203,7 @@ def get_train_config(
     muon_learning_rate=5e-2, #EDIT
     anneal_sam=False,
     muon_momentum=0.95,
+    sam_per_microbatch=False,
     muon_weight_decay=0.02,
     global_train_batch_size=256,
     device_train_microbatch_size=32,
@@ -314,6 +315,7 @@ def get_train_config(
             'momentum': momentum,
             'sam_rho': sam_rho,
             'sam_base_optimizer': sam_base_optimizer,
+            'sam_per_microbatch': sam_per_microbatch,
             'anneal_sam': anneal_sam,
             'muon_learning_rate': muon_learning_rate, #EDIT
             'muon_momentum': muon_momentum,

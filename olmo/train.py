@@ -868,6 +868,88 @@ class Trainer:
 
         return ce_batch_loss, z_batch_loss
 
+    def train_batch_microbatch_sam(
+        self, batch: Dict[str, Any], rho: float
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, Optional[torch.Tensor]]:
+        """Per-micro-batch SAM: each micro-batch gets its own ascent perturbation.
+
+        Returns (ce_loss_original, z_loss_original, ce_loss_perturbed, z_loss_perturbed).
+        """
+        micro_batches = self.split_batch(batch)
+        batch_size_in_tokens = batch["input_ids"].numel()
+        del batch
+
+        logging.info(f"Training with SAM per micro-batch")
+        ce_batch_loss = torch.tensor(0.0, device=self.device)
+        z_batch_loss = None if not self.cfg.softmax_auxiliary_loss else torch.tensor(0.0, device=self.device)
+        ce_batch_loss_sam = torch.tensor(0.0, device=self.device)
+        z_batch_loss_sam = None if not self.cfg.softmax_auxiliary_loss else torch.tensor(0.0, device=self.device)
+
+        descent_grad_buffer: Dict[torch.nn.Parameter, torch.Tensor] = {}
+
+        use_ddp_no_sync = (
+            self.cfg.distributed_strategy == DistributedStrategy.ddp
+            and self.cfg.ddp is not None
+            and self.cfg.ddp.grad_sync_mode == DDPGradSyncMode.batch
+        )
+
+        autocast_device = "mps" if self.device.type == "mps" else "cuda"
+
+        for micro_batch in micro_batches:
+            # --- Ascent phase: compute perturbation direction for this micro-batch ---
+            self.optim.zero_grad(set_to_none=True)
+            no_sync_ctx = self.dist_model.no_sync if use_ddp_no_sync else nullcontext
+            with no_sync_ctx():
+                with torch.autocast(autocast_device, enabled=True, dtype=self.cfg.autocast_precision):
+                    loss, ce_loss, z_loss = self.train_micro_batch(micro_batch, batch_size_in_tokens)
+                    ce_batch_loss += ce_loss.detach()
+                    if z_loss is not None:
+                        assert z_batch_loss is not None
+                        z_batch_loss += z_loss.detach()
+                loss.backward()
+
+            # Perturb params in the ascent direction, then zero grads
+            self.optim.first_step(zero_grad=True, rho=rho)
+
+            # --- Descent phase: compute gradient at the perturbed point ---
+            with no_sync_ctx():
+                with torch.autocast(autocast_device, enabled=True, dtype=self.cfg.autocast_precision):
+                    loss_p, ce_loss_p, z_loss_p = self.train_micro_batch(micro_batch, batch_size_in_tokens)
+                    ce_batch_loss_sam += ce_loss_p.detach()
+                    if z_loss_p is not None:
+                        assert z_batch_loss_sam is not None
+                        z_batch_loss_sam += z_loss_p.detach()
+                loss_p.backward()
+
+            # Accumulate descent grads into buffer
+            for group in self.optim.param_groups:
+                for p in group["params"]:
+                    if p.grad is not None:
+                        if p in descent_grad_buffer:
+                            descent_grad_buffer[p].add_(p.grad.detach())
+                        else:
+                            descent_grad_buffer[p] = p.grad.detach().clone()
+
+            # Restore original (unperturbed) params
+            self.optim.restore_original_params()
+
+        # Write accumulated descent grads back to .grad for the optimizer step
+        self.optim.zero_grad(set_to_none=True)
+        for group in self.optim.param_groups:
+            for p in group["params"]:
+                if p in descent_grad_buffer:
+                    p.grad = descent_grad_buffer[p]
+
+        # For DDP the descent backwards were all under no_sync, so we must reduce manually.
+        # For FSDP, gradients were already reduced during each backward call.
+        if use_ddp_no_sync:
+            for group in self.optim.param_groups:
+                for p in group["params"]:
+                    if p.grad is not None:
+                        dist.all_reduce(p.grad)
+
+        return ce_batch_loss, z_batch_loss, ce_batch_loss_sam, z_batch_loss_sam
+
     def train_step(self, batch: Dict[str, Any], reduce_global_loss: bool = True) -> Dict[str, float]:
         metrics: Dict[str, float] = {}
 
@@ -887,16 +969,26 @@ class Trainer:
         batch = move_to_device(batch, self.device)
 
         # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=isinstance(self.optim, SAM))
+        ce_batch_loss_sam = None
+        z_batch_loss_sam = None
 
         if isinstance(self.optim, SAM):
             new_rho = self.cfg.optimizer.sam_rho
             if self.cfg.optimizer.anneal_sam:
                 new_rho = self.scheduler.get_rho(self.cfg.optimizer.sam_rho, self.scheduler_current, self.scheduler_max)
-            self.optim.first_step(zero_grad=True, rho=new_rho)
             logging.info(f"Sam rho: {new_rho}")
-            ce_batch_loss_sam, z_batch_loss_sam = self.train_batch(batch)
-            self.optim.restore_original_params()
+
+            if self.cfg.optimizer.sam_per_microbatch:
+                ce_batch_loss, z_batch_loss, ce_batch_loss_sam, z_batch_loss_sam = (
+                    self.train_batch_microbatch_sam(batch, rho=new_rho)
+                )
+            else:
+                ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=True)
+                self.optim.first_step(zero_grad=True, rho=new_rho)
+                ce_batch_loss_sam, z_batch_loss_sam = self.train_batch(batch)
+                self.optim.restore_original_params()
+        else:
+            ce_batch_loss, z_batch_loss = self.train_batch(batch)
 
         # Collect loss, potentially reducing over all ranks.
         if reduce_global_loss:
@@ -905,6 +997,12 @@ class Trainer:
             if z_batch_loss is not None:
                 dist.reduce(z_batch_loss, 0)
                 z_batch_loss.div_(get_world_size())
+            if ce_batch_loss_sam is not None:
+                dist.reduce(ce_batch_loss_sam, 0)
+                ce_batch_loss_sam.div_(get_world_size())
+            if z_batch_loss_sam is not None:
+                dist.reduce(z_batch_loss_sam, 0)
+                z_batch_loss_sam.div_(get_world_size())
 
         # Clip gradient norms and collect param/gradient/optim metrics.
         should_log_optim_metrics_this_step = self.should_log_optim_metrics_this_step()
@@ -953,6 +1051,11 @@ class Trainer:
         metrics["train/Perplexity"] = math.exp(self.cur_train_loss)
         if z_batch_loss is not None:
             metrics["train/ZLoss"] = z_batch_loss.item()
+        if ce_batch_loss_sam is not None:
+            metrics["train/CrossEntropyLoss_SAM"] = ce_batch_loss_sam.item()
+            metrics["train/Perplexity_SAM"] = math.exp(ce_batch_loss_sam.item())
+        if z_batch_loss_sam is not None:
+            metrics["train/ZLoss_SAM"] = z_batch_loss_sam.item()
 
         # Maybe collect post-step optimizer-specific metrics.
         if should_log_optim_metrics_this_step:
