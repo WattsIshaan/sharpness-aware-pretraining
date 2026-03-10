@@ -11,7 +11,7 @@
 #SBATCH --partition=general
 
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate forgetting
+conda activate forgetting2
 
 # Set paths
 SCRIPT_DIR="/home/iwatts/catastrophic-forgetting/new_utils"
