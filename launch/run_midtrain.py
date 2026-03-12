@@ -7,16 +7,22 @@ Project.init('1b-experiments')
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
 from launch.artifacts import MidtrainedModel, ModelEvaluationDownstream, HFModel
-from launch.sft import build_sft_models
+from launch.sft import build_sft_models, build_sft_model_evaluations
 from launch.quantize import build_quantized_model_evaluation_downstreams
 
 midtrained_models = ArtifactSet.from_product(
     cls=MidtrainedModel,
     params={
         'optimizer': ['sam'],
-        'sam_rho': [5e-2],
+        # 'sam_rho': [1e-1, 2e-1],
+        'sam_rho': [1.5e-1],
         'midtrain_gpus': [8],
         'per_device_train_batch_size': [4],
+        'midtrain_tokens': [5],
+        # 'sam_per_microbatch': [True],
+        # 'global_train_batch_size': [512],
+        'anneal_sam': [True],
+
     }
 )
 
@@ -26,12 +32,12 @@ hf_model_evaluations = hf_models.map(lambda model: ModelEvaluationDownstream(mod
 quantized_model_evaluations = build_quantized_model_evaluation_downstreams(hf_models)
 
 sft_models = build_sft_models(hf_models)
-sft_model_evaluations = sft_models.map(lambda model: ModelEvaluationDownstream(model=model))
+sft_model_evaluations = build_sft_model_evaluations(sft_models)
 
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting'
+    'conda activate forgetting2'
 ])
 
 # Create executor

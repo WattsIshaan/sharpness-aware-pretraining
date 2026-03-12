@@ -9,10 +9,12 @@ def build_sft_models(hf_models: ArtifactSet) -> ArtifactSet:
             cls=SFTModel,
             params=dict(
                 hf_model=hf_model,
-                # learning_rate=[3e-5, 6e-5, 1e-4],
-                learning_rate=[1e-5],
+                learning_rate=[1e-5, 6e-5],# 6e-5],
+                # learning_rate=[1e-4, 1e-5],
+                # learning_rate=[1e-5, 3e-5, 6e-5, 1e-4],
+                # learning_rate=[3e-5],
                 weight_decay=[0.0],
-                num_train_epochs=[2],
+                num_train_epochs=[1],
                 sft_gpus=8,
             )
         )
@@ -20,4 +22,4 @@ def build_sft_models(hf_models: ArtifactSet) -> ArtifactSet:
 
 
 def build_sft_model_evaluations(sft_models: ArtifactSet) -> ArtifactSet:
-    return sft_models.map(lambda model: ModelEvaluationDownstream(model=model, tasks=('tulu_3_dev')))
+    return sft_models.map(lambda model: ModelEvaluationDownstream(model=model, tasks=('tulu_3_dev',), batch_size=2, gpu_count=1))
