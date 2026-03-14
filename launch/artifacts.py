@@ -1294,7 +1294,7 @@ class ModelEvaluation(Artifact):
 
     @property
     def exists(self) -> bool:
-        # return False
+        return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
@@ -1304,7 +1304,7 @@ class ModelEvaluation(Artifact):
         # return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gpus': 1, 'nodes': 1, 'cpus-per-task': 4, 'mem': '256GB', 'partition': 'general', 'time': "1-00:00:00"}
+        return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'flame', 'time': "1-00:00:00", "qos": "flame-32gpu_qos"}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
@@ -1470,8 +1470,84 @@ class ModelEvaluationDownstream(Artifact):
         )
 
         # Cleanup local directory
-        # log.info(f"Cleaning up local directory: {local_root}")
-        # shutil.rmtree(local_root, ignore_errors=True)
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
+
+
+@dataclass(frozen=True)
+class ModelEvaluationDownstreamOLMo(Artifact):
+    """
+    Evaluate a model on downstream tasks using the OLMo-native evaluation
+    script (new_utils/evaluate_downstream.py) instead of olmes.
+    Works with both OLMo 1 and OLMo 2 checkpoints.
+    """
+    model: "PretrainedModel | CPTModel | AnnealedModel | MidtrainedModel | AnnealedModel2"
+    tasks: tuple = ('winogrande', 'mmlu_other_var', 'sciq', 'hellaswag', 'copa', 'openbook_qa')
+    batch_size: int = 8
+    subset_num_batches: int = 0
+    hf_model: bool = False
+    quant_bit: int = None
+
+    @property
+    def run_name(self) -> str:
+        name = self.model.run_name
+        if self.quant_bit is not None:
+            name += f'-quant-{self.quant_bit}bit'
+        return name
+
+    @property
+    def relpath(self) -> str:
+        return f'ModelEvaluationDownstreamOLMo/{self.run_name}-downstream-eval.json'
+
+    @property
+    def exists(self) -> bool:
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
+        remote_files = G.get_remote_files(subfolder='ModelEvaluationDownstreamOLMo')
+        found = any(f.startswith(remote_path) for f in remote_files)
+        return found
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'flame', 'time': '1-00:00:00', 'qos': 'flame-32gpu_qos'}
+
+    def construct(self, builder: Task):
+        local_root = G.get_random_local_path()
+        gs_root = cast(str, Project.config.GS_PATH)
+        local_output = os.path.join(local_root, self.relpath)
+        builder.ensure_directory(os.path.dirname(local_output))
+
+        # 1. Fetch Model
+        local_model = os.path.join(local_root, self.model.checkpoint_relpath)
+        builder.rsync_from_gs(
+            os.path.join(gs_root, self.model.checkpoint_relpath),
+            local_model,
+            delete=False, checksum=False, skip_existing=False, check_exists=True, contents=True,
+        )
+
+        # 2. Run downstream evaluation
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        eval_script = os.path.join(olmo_path, 'new_utils', 'evaluate_downstream.py')
+        tasks_str = ','.join(self.tasks)
+        cmd = [
+            'python', eval_script,
+            f'--model_path {local_model}',
+            f'--tasks {tasks_str}',
+            f'--output_path {local_output}',
+            f'--device cuda',
+            f'--batch_size {self.batch_size}',
+            f'--subset_num_batches {self.subset_num_batches}',
+        ]
+        if self.hf_model:
+            cmd.append('--hf_model')
+            if self.quant_bit is not None:
+                cmd.append(f'--quantize={self.quant_bit}')
+
+        builder.run_command(' '.join(cmd))
+        builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluationDownstreamOLMo'), delete=False, checksum=False, contents=True)
+
+        log.info(f"Cleaning up local directory: {local_root}")
+        shutil.rmtree(local_root, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1701,6 +1777,7 @@ class SFTModel(Artifact):
             f' && echo "Saved dataset config hash: $(cat {hash_file})"'
         )
         builder.run_command(' '.join(precache_parts))
+        exp_name = self.run_name[len(self.run_name)-64+1:] if len(self.run_name) > 64 else self.run_name
 
         cmd_parts = [
             'source ~/open-instruct/.venv/bin/activate &&',
@@ -1716,7 +1793,7 @@ class SFTModel(Artifact):
             f'--deepspeed_config_file {ds_config}',
             '--deepspeed_multinode_launcher standard',
             finetune_script,
-            f'--exp_name {self.run_name}',
+            f'--exp_name {exp_name}', 
             f'--model_name_or_path {local_model_path}',
             f'--dataset_mixer_list {dataset_mixer_str}',
             '--use_flash_attn',

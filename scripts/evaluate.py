@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from olmo.model import OLMo
 from hf_olmo.modeling_olmo import OLMoForCausalLM
-from transformers import BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -130,9 +130,13 @@ def main():
         quantization_config = None
         if args.quantize is not None:
             quantization_config = BitsAndBytesConfig(load_in_8bit=args.quantize==8, load_in_4_bit=args.quantize==4)
-        model = OLMoForCausalLM.from_pretrained(args.model_path, device_map="auto", quantization_config=quantization_config) #.to(device)
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_path, device_map="auto", torch_dtype=torch.bfloat16,
+            quantization_config=quantization_config, trust_remote_code=True,
+        )
     else:
         model = OLMo.from_checkpoint(args.model_path, device=args.device)
+        model = model.to(dtype=torch.bfloat16)  
     model.eval()
     
     # Parse comma-separated data paths

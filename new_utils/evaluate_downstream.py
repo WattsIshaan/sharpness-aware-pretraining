@@ -9,9 +9,9 @@ Usage:
         --model_path /path/to/checkpoint \
         --tasks piqa,hellaswag,winogrande \
         --output_path results.json \
-        --tokenizer tokenizers/allenai_dolma2.json \
         [--device cuda] \
         [--batch_size 8]
+
 """
 
 import argparse
@@ -32,7 +32,7 @@ from olmo.model import OLMo
 from olmo.tokenizer import Tokenizer
 from olmo.torch_util import get_global_rank, get_world_size
 from hf_olmo.modeling_olmo import OLMoForCausalLM
-from transformers import BitsAndBytesConfig, AutoTokenizer
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig, AutoTokenizer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
@@ -142,7 +142,6 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Path to OLMo checkpoint directory")
     parser.add_argument("--tasks", type=str, required=True, help="Comma-separated list of downstream task names")
     parser.add_argument("--output_path", type=str, required=True, help="Path to output JSON file")
-    parser.add_argument("--tokenizer", type=str, default=None, help="Path to tokenizer JSON file (if not provided, uses checkpoint config)")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run on")
     parser.add_argument("--batch_size", type=int, default=8, help="Evaluation batch size")
     parser.add_argument("--subset_num_batches", type=int, default=0, help="Limit number of eval batches per task (0 = all)")
@@ -163,21 +162,22 @@ def main():
                 load_in_8bit=args.quantize == 8,
                 load_in_4bit=args.quantize == 4,
             )
-        model = OLMoForCausalLM.from_pretrained(
-            args.model_path, device_map="auto", quantization_config=quantization_config, max_sequence_length=2048
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_path, device_map="auto", torch_dtype=torch.bfloat16,
+            quantization_config=quantization_config,
         )
     else:
         model = OLMo.from_checkpoint(args.model_path, device=args.device)
+        model = model.to(dtype=torch.bfloat16)
     model.eval()
     log.info("Model loaded successfully")
 
-    # Load tokenizer
-    if args.tokenizer:
-        log.info(f"Loading tokenizer from {args.tokenizer}")
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, fix_mistral_regex=True)
+    # Load tokenizer from model path
+    if args.hf_model:
+        log.info(f"Loading tokenizer from {args.model_path}")
+        tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     else:
-        # Load from checkpoint config
-        log.info(f"Loading tokenizer from Train config")
+        log.info(f"Loading tokenizer from Train config at {args.model_path}")
         config_path = Path(args.model_path) / "config.yaml"
         train_config = TrainConfig.load(str(config_path), validate_paths=False)
         tokenizer = Tokenizer.from_train_config(train_config)
