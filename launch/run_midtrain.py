@@ -6,9 +6,9 @@ Project.init('1b-experiments')
 
 # 2) Rest of imports
 from experiments import SlurmExecutor, ArtifactSet  # type: ignore
-from launch.artifacts import MidtrainedModel, ModelEvaluationDownstream, HFModel, ModelEvaluation, ModelEvaluationDownstreamOLMo
-from launch.sft import build_sft_models, build_sft_model_evaluations
+from launch.artifacts import MidtrainedModel, ModelEvaluationDownstream, HFModel, ModelEvaluation, ModelEvaluationDownstreamOLMo, CPTModel
 from launch.quantize import build_quantized_model_evaluation_downstreams
+from launch.cpt_1b import build_cpt_models, build_cpt_model_evaluations
 
 midtrained_models = ArtifactSet.from_product(
     cls=MidtrainedModel,
@@ -27,6 +27,9 @@ midtrained_models = ArtifactSet.from_product(
 
 midtrain_eval = midtrained_models.map(lambda model: ModelEvaluationDownstreamOLMo(model=model))
 
+cpt_models = build_cpt_models(midtrained_models)
+cpt_model_evaluations = build_cpt_model_evaluations(cpt_models)
+
 hf_models = midtrained_models.map(lambda model: HFModel(pretrained_model=model))
 hf_model_evaluations = hf_models.map(lambda model: ModelEvaluationDownstream(model=model))
 hf_model_evaluations_olmo = hf_models.map(lambda model: ModelEvaluationDownstreamOLMo(model=model, hf_model=True))
@@ -34,8 +37,8 @@ hf_model_evaluations_olmo = hf_models.map(lambda model: ModelEvaluationDownstrea
 quantized_model_evaluations = build_quantized_model_evaluation_downstreams(hf_models)
 quantized_model_evaluations_olmo = quantized_model_evaluations.map(lambda model: ModelEvaluationDownstreamOLMo(model=model, hf_model=True, quant_bit=4))
 
-sft_models = build_sft_models(hf_models)
-sft_model_evaluations = build_sft_model_evaluations(sft_models)
+# sft_models = build_sft_models(hf_models)
+# sft_model_evaluations = build_sft_model_evaluations(sft_models)
 
 # Setup command for the executor
 setup_command = ' && '.join([
@@ -49,15 +52,17 @@ executor = SlurmExecutor(
 )
 
 # Stages
-executor.stage('m', midtrained_models)
-executor.stage('me', midtrain_eval)
+executor.stage('midtrain', midtrained_models)
+executor.stage('midtrain_eval', midtrain_eval)
+executor.stage('cpt', cpt_models)
+executor.stage('cpt_eval', cpt_model_evaluations)
 executor.stage('hf', hf_models)
-executor.stage('he', hf_model_evaluations)
-executor.stage('heo', hf_model_evaluations_olmo)
-executor.stage('qe', quantized_model_evaluations)
-executor.stage('qeo', quantized_model_evaluations_olmo)
-executor.stage('sft', sft_models)
-executor.stage('sft_eval', sft_model_evaluations)
+executor.stage('hf_eval', hf_model_evaluations)
+executor.stage('hf_eval_olmo', hf_model_evaluations_olmo)
+executor.stage('q_eval', quantized_model_evaluations)
+executor.stage('q_eval_olmo', quantized_model_evaluations_olmo)
+# executor.stage('sft', sft_models)
+# executor.stage('sft_eval', sft_model_evaluations)
 
 if __name__ == '__main__':
     executor.auto_cli()

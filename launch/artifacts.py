@@ -45,11 +45,11 @@ LIST_OF_PRETRAIN_FILES = {
             "dclm-validation": ['dclm/val/dclm-20m.npy']#, 'dclm/val/dclm-train-20m.npy']
         }
     },
-    "dolmino": {
-        "val": {
-            "dclm-validation": ['dclm/val/dclm-20m.npy']#, 'dclm/val/dclm-train-20m.npy']
-        }
-    }
+    # "dolmino": {
+    #     "val": {
+    #         "dclm-validation": ['dclm/val/dclm-20m.npy']#, 'dclm/val/dclm-train-20m.npy']
+    #     }
+    # }
 }
 
 LIST_OF_CPT_FILES = {
@@ -141,7 +141,58 @@ LIST_OF_CPT_FILES = {
             "val": {"helpsteer-validation": {"data": ['nvidia_HelpSteer/val/input_ids-helpsteer.npy'], "masks": ['nvidia_HelpSteer/val/label_mask.npy']}},
         },
 
-    }
+    },
+    "dolmino": {
+        "tulu": {
+            "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
+            "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
+            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}},
+        },
+        "starcoder": {
+            "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
+            "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
+            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}},
+        },
+        "musicpile": {
+            "data_paths": ["musicpile/train/input_ids.npy"],
+            "mask_paths": ["musicpile/train/label_mask.npy"],
+            "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}},
+        },
+        "alpaca": {
+            "data_paths": ["tatsu-lab_alpaca/train/input_ids.npy"],
+            "mask_paths": ["tatsu-lab_alpaca/train/label_mask.npy"],
+            "val": {"alpaca-validation": {"data": ['tatsu-lab_alpaca/val/input_ids-alpaca.npy'], "masks": ['tatsu-lab_alpaca/val/label_mask.npy']}},
+            "train_tokens": 3.6,
+        },
+        "gsm8k": {
+            "data_paths": ["openai_gsm8k/train/input_ids.npy"],
+            "mask_paths": ["openai_gsm8k/train/label_mask.npy"],
+            "val": {"gsm8k-validation": {"data": ['openai_gsm8k/val/input_ids-gsm8k.npy'], "masks": ['openai_gsm8k/val/label_mask.npy']}},
+            "train_tokens": 1.2,
+        },
+        "siqa": {
+            "data_paths": ["allenai_social_i_qa/train/input_ids.npy"],
+            "mask_paths": ["allenai_social_i_qa/train/label_mask.npy"],
+            "val": {"siqa-validation": {"data": ['allenai_social_i_qa/val/input_ids-siqa.npy'], "masks": ['allenai_social_i_qa/val/label_mask.npy']}},
+            "train_tokens": 1.18,
+        },
+        "open-platypus": {
+            "data_paths": ["garage-bAInd_Open-Platypus/train/input_ids.npy"],
+            "mask_paths": ["garage-bAInd_Open-Platypus/train/label_mask.npy"],
+            "val": {"open-platypus-validation": {"data": ['garage-bAInd_Open-Platypus/val/input_ids-open-platypus.npy'], "masks": ['garage-bAInd_Open-Platypus/val/label_mask.npy']}},
+            "train_tokens": 7,
+        },
+        "stackmathqa": {
+            "data_paths": ["math-ai_StackMathQA/train/input_ids.npy"],
+            "mask_paths": ["math-ai_StackMathQA/train/label_mask.npy"],
+            "val": {"stackmathqa-validation": {"data": ['math-ai_StackMathQA/val/input_ids-stackmathqa.npy'], "masks": ['math-ai_StackMathQA/val/label_mask.npy']}},
+        },
+        "helpsteer": {
+            "data_paths": ["nvidia_HelpSteer/train/input_ids.npy"],
+            "mask_paths": ["nvidia_HelpSteer/train/label_mask.npy"],
+            "val": {"helpsteer-validation": {"data": ['nvidia_HelpSteer/val/input_ids-helpsteer.npy'], "masks": ['nvidia_HelpSteer/val/label_mask.npy']}},
+        },
+    },
 }
 
 PT_LR = {
@@ -298,6 +349,7 @@ class PretrainedModel(Artifact):
     muon_momentum: float = 0.95
     muon_weight_decay: float = 0.1
     pretrain_dataset: str = "dclm"
+    sequence_length: int = 1024
 
     @property
     def learning_rate(self) -> float:
@@ -477,6 +529,7 @@ class MidtrainedModel(Artifact):
     per_device_train_batch_size: int = 8
     anneal_sam: bool = False
     sam_per_microbatch: bool = False
+    sequence_length: int = 2048
 
     @property
     def relpath(self) -> str:
@@ -501,6 +554,10 @@ class MidtrainedModel(Artifact):
     @property
     def pretrain_dataset(self) -> str:
         return "dolmino"
+
+    @property
+    def model_size(self) -> str:
+        return "1b"
 
     @property
     def exists(self) -> bool:
@@ -670,6 +727,10 @@ class AnnealedModel(Artifact):
     anneal_percent: int = None
 
     @property
+    def sequence_length(self) -> int:
+        return self.pretrained_model.sequence_length
+
+    @property
     def relpath(self) -> str:
         return f'AnnealedModel/{self.run_name}'
 
@@ -755,10 +816,10 @@ class AnnealedModel(Artifact):
 
         # 3. Data Preparation
         if self.anneal_steps is not None:
-            anneal_tokens = self.anneal_steps * 1024 * 256 / BILLION
+            anneal_tokens = self.anneal_steps * self.sequence_length * 256 / BILLION
             max_duration = self.anneal_steps
         else:
-            anneal_tokens = (self.anneal_percent * self.pretrain_ckpt_step / 100) * 1024 * 256 / BILLION
+            anneal_tokens = (self.anneal_percent * self.pretrain_ckpt_step / 100) * self.sequence_length * 256 / BILLION
             max_duration = int(self.anneal_percent * self.pretrain_ckpt_step / 100)
 
         train_data_paths = [
@@ -869,6 +930,10 @@ class AnnealedModel2(Artifact):
     anneal_gpus: int = 8
     anneal_optim: str = 'adamw'
     anneal_percent: int = None
+
+    @property
+    def sequence_length(self) -> int:
+        return self.pretrained_model.sequence_length
 
     @property
     def relpath(self) -> str:
@@ -1035,7 +1100,7 @@ class AnnealedModel2(Artifact):
 @dataclass(frozen=True)
 class CPTModel(Artifact):
     train_tokens: int
-    pretrained_model: PretrainedModel | AnnealedModel | AnnealedModel2
+    pretrained_model: PretrainedModel | AnnealedModel | AnnealedModel2 | MidtrainedModel
     cpt_dataset: str
     optimizer: str = 'adamw'
     learning_rate: float = 6e-4
@@ -1047,6 +1112,10 @@ class CPTModel(Artifact):
     muon_learning_rate: float = 5e-4
     muon_weight_decay: float = 0.1
     muon_momentum: float = 0.95
+
+    @property
+    def sequence_length(self) -> int:
+        return self.pretrained_model.sequence_length
 
     @property
     def relpath(self) -> str:
@@ -1074,7 +1143,7 @@ class CPTModel(Artifact):
 
     @property
     def exists(self) -> bool:
-        return False
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
@@ -1136,13 +1205,15 @@ class CPTModel(Artifact):
             train_tokens = tmp_train_tokens
 
         total_tokens = train_tokens * MILLION
-        total_steps = max(1, total_tokens // (self.batch_size * 1024))
+        total_steps = max(1, total_tokens // (self.batch_size * self.sequence_length))
         warmup_steps = max(1, int(total_steps * 0.1))
 
         # 4. Config & Overrides
         overrides = {}
         if self.pretrain_dataset == "dclm":
             overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
+
+        exp_name = self.run_name[len(self.run_name)-64+1:] if len(self.run_name) > 64 else self.run_name
 
         config = get_train_config(
             run_name=self.run_name,
@@ -1158,6 +1229,7 @@ class CPTModel(Artifact):
             muon_momentum=self.muon_momentum,
             muon_weight_decay=self.muon_weight_decay,
             max_duration=f'{train_tokens}e6T',
+            decay_embeddings=False if self.model_size == "1b" else True,
             seed=6198,
             model_overrides=overrides,
             scheduler_name=self.scheduler_name,
@@ -1169,11 +1241,11 @@ class CPTModel(Artifact):
             save_interval_unsharded=1000,
             wandb_project=cast(str, Project.config.PROJECT_NAME),
             wandb_entity=cast(str, Project.config.WANDB_ENTITY),
-            wandb_id=self.run_name,
+            wandb_id=exp_name,
             load_path=local_pre_path,
             reset_optimizer_state=True,
-            tokenizer={'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset=="dclm" else "gpt-neox-olmo-dolma-v1_5"}.json'},
-            dtype='uint32' if self.pretrain_dataset == "dclm" else 'uint16',
+            tokenizer={'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset in ("dclm", "dolmino") else "gpt-neox-olmo-dolma-v1_5"}.json'},
+            dtype='uint32' if self.pretrain_dataset in ("dclm", "dolmino") else 'uint16',
         )
 
         # 5. Execute
@@ -1294,14 +1366,13 @@ class ModelEvaluation(Artifact):
 
     @property
     def exists(self) -> bool:
-        return False
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
         remote_files = G.get_remote_files(subfolder='ModelEvaluation')
         found = any(f.startswith(remote_path) for f in remote_files)
         return found
-        # return False  # Force re-eval
 
     def get_requirements(self) -> Dict[str, Any]:
         return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'flame', 'time': "1-00:00:00", "qos": "flame-32gpu_qos"}
