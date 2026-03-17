@@ -163,7 +163,7 @@ def main():
                 load_in_4bit=args.quantize == 4,
             )
         model = AutoModelForCausalLM.from_pretrained(
-            args.model_path, device_map="auto", torch_dtype=torch.bfloat16,
+            args.model_path, device_map="auto", dtype=torch.bfloat16,
             quantization_config=quantization_config,
         )
     else:

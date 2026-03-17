@@ -99,3 +99,11 @@ def get_random_local_path() -> str:
         return os.path.join(local_output_path, ''.join(random.choices(string.ascii_letters, k=8)))
     else:
         return local_output_path
+
+
+def get_cpt_checkpoint_cache_dir() -> str:
+    """Fixed cache directory for CPT pretrained checkpoints. Use with download_cpt_checkpoints.py."""
+    base = LOCAL_OUTPUT_PATH
+    if base is None:
+        raise RuntimeError('Globals not initialized. Call load_project(project_name) first.')
+    return os.path.join(cast(str, base), 'cpt_checkpoints')

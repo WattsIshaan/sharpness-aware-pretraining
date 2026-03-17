@@ -192,6 +192,11 @@ LIST_OF_CPT_FILES = {
             "mask_paths": ["nvidia_HelpSteer/train/label_mask.npy"],
             "val": {"helpsteer-validation": {"data": ['nvidia_HelpSteer/val/input_ids-helpsteer.npy'], "masks": ['nvidia_HelpSteer/val/label_mask.npy']}},
         },
+        "codealpaca": {
+            "data_paths": ["HuggingFaceH4_CodeAlpaca_20K/train/input_ids.npy"],
+            "mask_paths": ["HuggingFaceH4_CodeAlpaca_20K/train/label_mask.npy"],
+            "val": {"codealpaca-validation": {"data": ['HuggingFaceH4_CodeAlpaca_20K/val/input_ids-codealpaca.npy'], "masks": ['HuggingFaceH4_CodeAlpaca_20K/val/label_mask.npy']}},
+        },
     },
 }
 
@@ -509,8 +514,8 @@ class PretrainedModel(Artifact):
         builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_output_path}")
-        shutil.rmtree(local_output_path, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_output_path}")
+        # shutil.rmtree(local_output_path, ignore_errors=True)
 
 @dataclass(frozen=True)
 class MidtrainedModel(Artifact):
@@ -522,6 +527,7 @@ class MidtrainedModel(Artifact):
     optimizer: str = 'adamw'
     sam_rho: float = 0.05
     load_path: str = 'PretrainedModel/OLMo2-1b-tk4T-adamw/final-unsharded'
+    learning_rate: float = 7.4487e-5
     midtrain_gpus: int = 8
     global_train_batch_size: int = 1024
     midtrain_tokens: int = 5
@@ -537,11 +543,17 @@ class MidtrainedModel(Artifact):
 
     @property
     def run_name(self) -> str:
-        name = f'OLMo2-1b-tk4T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
+        if self.load_path == 'PretrainedModel/OLMo2-1b-tk4T-adamw/step950000-unsharded':
+            name = f'OLMo2-1b-tk2T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
+        else:
+            name = f'OLMo2-1b-tk4T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
         if self.sam_per_microbatch:
             name += '_per_microbatch'
         if self.optimizer == "sam":
-            name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
+            if self.sam_rho == 0.15:
+                name += f'-rho{self.sam_rho:.2e}'.replace('e-0', 'e-')
+            else:
+                name += f'-rho{self.sam_rho:.0e}'.replace('e-0', 'e-')
             if self.anneal_sam:
                 name += '-anneal'
         name += f'-bs{self.global_train_batch_size}'
@@ -708,8 +720,8 @@ class MidtrainedModel(Artifact):
         builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_output_path}")
-        shutil.rmtree(local_output_path, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_output_path}")
+        # shutil.rmtree(local_output_path, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -915,8 +927,8 @@ class AnnealedModel(Artifact):
         builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_output_path}")
-        shutil.rmtree(local_output_path, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_output_path}")
+        # shutil.rmtree(local_output_path, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1093,8 +1105,8 @@ class AnnealedModel2(Artifact):
         builder.rsync_to_gs(save_folder, remote_folder, delete=True, checksum=False, contents=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_output_path}")
-        shutil.rmtree(local_output_path, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_output_path}")
+        # shutil.rmtree(local_output_path, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1112,6 +1124,7 @@ class CPTModel(Artifact):
     muon_learning_rate: float = 5e-4
     muon_weight_decay: float = 0.1
     muon_momentum: float = 0.95
+    use_checkpoint_cache: bool = True
 
     @property
     def sequence_length(self) -> int:
@@ -1174,7 +1187,11 @@ class CPTModel(Artifact):
 
         # 1. Load Pretrained Checkpoint
         pre_ckpt_rel = self.pretrained_model.checkpoint_relpath
-        local_pre_path = os.path.join(local_root, pre_ckpt_rel)
+        if self.use_checkpoint_cache:
+            pre_root = G.get_cpt_checkpoint_cache_dir()
+        else:
+            pre_root = local_root
+        local_pre_path = os.path.join(pre_root, pre_ckpt_rel)
         builder.rsync_from_gs(os.path.join(gs_root, pre_ckpt_rel), local_pre_path, delete=True, checksum=True, skip_existing=True, check_exists=True, contents=True, )
 
         # 2. Map CPT Data
@@ -1186,6 +1203,14 @@ class CPTModel(Artifact):
         eval_datasets = {}
         eval_datasets["pretrain"] = {}
         eval_datasets["cpt"] = {}
+        eval_datasets["downstream"] = [
+            'winogrande',
+            'mmlu_other_var',
+            'sciq',
+            'hellaswag',
+            'copa',
+            'openbook_qa',
+        ]
         for k, v in dataset_info["val"].items():
             paths = v.get("data", []) if isinstance(v, dict) else v
             masks = v.get("masks", None) if isinstance(v, dict) else None
@@ -1196,6 +1221,9 @@ class CPTModel(Artifact):
                     "data_paths" : [os.path.join(local_root, p) for p in paths],
                     "mask_paths" : [os.path.join(local_root, m) for m in masks]
                 }
+        
+        if self.pretrain_dataset == "dolmino":
+            del eval_datasets["pretrain"]
 
 
         # 3. Step & Scheduler Math
@@ -1229,7 +1257,7 @@ class CPTModel(Artifact):
             muon_momentum=self.muon_momentum,
             muon_weight_decay=self.muon_weight_decay,
             max_duration=f'{train_tokens}e6T',
-            decay_embeddings=False if self.model_size == "1b" else True,
+            decay_embeddings=False if self.pretrained_model.model_size == "1b" else True,
             seed=6198,
             model_overrides=overrides,
             scheduler_name=self.scheduler_name,
@@ -1254,9 +1282,12 @@ class CPTModel(Artifact):
         builder.create_yaml_file(os.path.join(save_folder, 'config.yaml'), config)
 
         # Download all data (Train + Masks + Eval)
-        gs_data_path = cast(str, Project.config.GS_DATA_PATH)
-        for p in (train_paths + mask_paths + [item for sub in eval_datasets["pretrain"].values() for item in sub] + [item for sub_dict in eval_datasets["cpt"].values() for sub_list in sub_dict.values() for item in sub_list]):
+        gs_data_path = cast(str, Project.config.GS_DATA_PATH)            
+        for p in (train_paths + mask_paths + [item for sub_dict in eval_datasets["cpt"].values() for sub_list in sub_dict.values() for item in sub_list]):
             builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
+        if self.pretrain_dataset != "dolmino":
+            for p in [item for sub in eval_datasets["pretrain"].values() for item in sub]:
+                builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
 
         olmo_path = cast(str, Project.config.OLMO_PATH)
         train_script = os.path.join(olmo_path, 'scripts', 'train.py')
@@ -1267,8 +1298,8 @@ class CPTModel(Artifact):
         builder.upload_to_gs(save_folder, remote_folder, directory=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_root}")
-        shutil.rmtree(local_root, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_root}")
+        # shutil.rmtree(local_root, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1432,8 +1463,8 @@ class ModelEvaluation(Artifact):
         builder.rsync_to_gs(os.path.dirname(local_output), os.path.join(cast(str, Project.config.GS_PATH), 'ModelEvaluation'), delete=False, checksum=False, contents=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_root}")
-        shutil.rmtree(local_root, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_root}")
+        # shutil.rmtree(local_root, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1442,7 +1473,7 @@ class ModelEvaluationDownstream(Artifact):
     Evaluate an HFModel on downstream tasks using the olmes evaluation framework.
     """
     model: "HFModel | SFTModel"
-    tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
+    tasks: tuple = ("gsm8k::olmes",) # ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
     batch_size: int = 8
     load_in_4bit: bool = False
     load_in_8bit: bool = False
@@ -1541,8 +1572,8 @@ class ModelEvaluationDownstream(Artifact):
         )
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_root}")
-        shutil.rmtree(local_root, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_root}")
+        # shutil.rmtree(local_root, ignore_errors=True)
 
 
 @dataclass(frozen=True)
@@ -1626,7 +1657,7 @@ class HFModel(Artifact):
     """
     Convert a `PretrainedModel` checkpoint to a HuggingFace-compatible format and upload to GS.
     """
-    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2
+    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2 | CPTModel
 
     @property
     def run_name(self) -> str:
@@ -1704,7 +1735,7 @@ class HFModel(Artifact):
             tokenizer_file = "allenai_gpt-neox-olmo-dolma-v1_5.json"
         tokenizer_path = os.path.join(tokenizer_dir, tokenizer_file)
 
-        if isinstance(self.pretrained_model, MidtrainedModel):
+        if isinstance(self.pretrained_model, MidtrainedModel) or isinstance(self.pretrained_model, CPTModel):
             convert_script = os.path.join(olmo_path, "scripts", "convert_olmo2_to_hf.py")
             cmd_parts = [
                 "python",
@@ -1731,8 +1762,8 @@ class HFModel(Artifact):
         builder.upload_to_gs(save_folder, remote_folder, directory=True)
 
         # Cleanup local directory
-        log.info(f"Cleaning up local directory: {local_root}")
-        shutil.rmtree(local_root, ignore_errors=True)
+        # log.info(f"Cleaning up local directory: {local_root}")
+        # shutil.rmtree(local_root, ignore_errors=True)
 
 
 @dataclass(frozen=True)

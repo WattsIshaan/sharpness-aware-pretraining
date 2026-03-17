@@ -93,7 +93,8 @@ def evaluate_file(model: OLMo, data_path: str, chunk_size: int, device: torch.de
                 masked_loss = loss_per_token * mask_flat.float()
                 
                 total_loss += masked_loss.sum().item()
-                total_tokens += mask_flat.sum().item()
+                total_tokens += labels_flat.numel()
+                # total_tokens += mask_flat.sum().item()
             else:
                 # No mask - compute loss on all tokens
                 loss = F.cross_entropy(logits_flat, labels_flat, reduction='sum')
