@@ -526,8 +526,7 @@ class MidtrainedModel(Artifact):
     """
     optimizer: str = 'adamw'
     sam_rho: float = 0.05
-    load_path: str = 'PretrainedModel/OLMo2-1b-tk4T-adamw/final-unsharded'
-    learning_rate: float = 7.4487e-5
+    train_tokens: int = 4
     midtrain_gpus: int = 8
     global_train_batch_size: int = 1024
     midtrain_tokens: int = 5
@@ -536,6 +535,7 @@ class MidtrainedModel(Artifact):
     anneal_sam: bool = False
     sam_per_microbatch: bool = False
     sequence_length: int = 2048
+    scheduler_alpha_f: float = 0.0
 
     @property
     def relpath(self) -> str:
@@ -543,10 +543,7 @@ class MidtrainedModel(Artifact):
 
     @property
     def run_name(self) -> str:
-        if self.load_path == 'PretrainedModel/OLMo2-1b-tk4T-adamw/step950000-unsharded':
-            name = f'OLMo2-1b-tk2T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
-        else:
-            name = f'OLMo2-1b-tk4T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
+        name = f'OLMo2-1b-tk{self.train_tokens}T-adamw-Midtrain-{self.midtrain_tokens}B-{self.optimizer}'
         if self.sam_per_microbatch:
             name += '_per_microbatch'
         if self.optimizer == "sam":
@@ -557,11 +554,31 @@ class MidtrainedModel(Artifact):
             if self.anneal_sam:
                 name += '-anneal'
         name += f'-bs{self.global_train_batch_size}'
+        if self.scheduler_alpha_f != 0.0:
+            name += f'-alpha_f{self.scheduler_alpha_f:.2e}'.replace('e-0', 'e-')
         return name
 
     @property
     def checkpoint_relpath(self) -> str:
         return f'{self.relpath}/final-unsharded'
+    
+    @property
+    def load_path(self) -> str:
+        if self.train_tokens == 4:
+            return 'PretrainedModel/OLMo2-1b-tk4T-adamw/final-unsharded'
+        elif self.train_tokens == 2:
+            return 'PretrainedModel/OLMo2-1b-tk4T-adamw/step950000-unsharded'
+        else:
+            raise ValueError(f"Invalid train_tokens: {self.train_tokens}")
+    
+    @property
+    def learning_rate(self) -> float:
+        if self.train_tokens == 2:
+            return 2.7699e-4
+        elif self.train_tokens == 4:
+            return 7.4487e-5
+        else:
+            raise ValueError(f"Invalid train_tokens: {self.train_tokens}")
     
     @property
     def pretrain_dataset(self) -> str:
@@ -632,7 +649,7 @@ class MidtrainedModel(Artifact):
             model_size='1b',
             optimizer=self.optimizer,
             sam_rho=self.sam_rho,
-            learning_rate=7.4487e-5,
+            learning_rate=self.learning_rate,
             weight_decay=0.1,
             optimizer_eps=1e-8,
             decay_embeddings=False,
@@ -641,7 +658,7 @@ class MidtrainedModel(Artifact):
             seed=self.seed,
             scheduler_name='linear_with_warmup',
             scheduler_t_warmup=0,
-            scheduler_alpha_f=0.0,
+            scheduler_alpha_f=self.scheduler_alpha_f,
             global_train_batch_size=self.global_train_batch_size,
             device_train_microbatch_size=self.per_device_train_batch_size,
             device_eval_batch_size=8,
@@ -1125,6 +1142,7 @@ class CPTModel(Artifact):
     muon_weight_decay: float = 0.1
     muon_momentum: float = 0.95
     use_checkpoint_cache: bool = True
+    step: str = 'final'
 
     @property
     def sequence_length(self) -> int:
@@ -1136,7 +1154,7 @@ class CPTModel(Artifact):
 
     @property
     def checkpoint_relpath(self) -> str:
-        return f'{self.relpath}/final-unsharded'
+        return f'{self.relpath}/{self.step}-unsharded'
 
     @property
     def pretrain_dataset(self) -> str:
@@ -1152,6 +1170,8 @@ class CPTModel(Artifact):
         if self.optimizer == 'muon':
             muon_lr = f'{self.muon_learning_rate:.2e}'.replace('e-0', 'e-')
             name += f'-muon_lr{muon_lr}'
+        if self.step != 'final':
+            name += f'-{self.step}'
         return name
 
     @property
@@ -1473,7 +1493,7 @@ class ModelEvaluationDownstream(Artifact):
     Evaluate an HFModel on downstream tasks using the olmes evaluation framework.
     """
     model: "HFModel | SFTModel"
-    tasks: tuple = ("gsm8k::olmes",) # ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
+    tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
     batch_size: int = 8
     load_in_4bit: bool = False
     load_in_8bit: bool = False
@@ -1494,6 +1514,7 @@ class ModelEvaluationDownstream(Artifact):
 
     @property
     def exists(self) -> bool:
+        # return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.relpath)
