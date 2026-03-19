@@ -53,7 +53,7 @@ def build_cpt_models(midtrained_models: ArtifactSet) -> ArtifactSet:
                         scheduler_name='cosine_with_warmup',
                         scheduler_alpha_f=0.1,
                         cpt_gpus=2,
-                        use_checkpoint_cache=True,
+                        use_checkpoint_cache=False,
                         step="step4000"
                     )
                 )
@@ -73,7 +73,7 @@ def build_cpt_models(midtrained_models: ArtifactSet) -> ArtifactSet:
                     scheduler_name='cosine_with_warmup',
                     scheduler_alpha_f=0.1,
                     cpt_gpus=2,
-                    use_checkpoint_cache=True,
+                    use_checkpoint_cache=False,
                     step="step4000"
                     )
                 )

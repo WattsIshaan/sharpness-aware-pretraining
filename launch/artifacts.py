@@ -1154,7 +1154,7 @@ class CPTModel(Artifact):
 
     @property
     def checkpoint_relpath(self) -> str:
-        return f'{self.relpath}/{self.step}-unsharded'
+        return f'{self.relpath}/final-unsharded'
 
     @property
     def pretrain_dataset(self) -> str:
@@ -1166,7 +1166,10 @@ class CPTModel(Artifact):
         lr_str = f'{self.learning_rate:.2e}'.replace('e-0', 'e-')
         wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
         
-        name = f'{pre_name}-CPT-{self.cpt_dataset}-tk{self.train_tokens}M-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        if self.pretrained_model.model_size == '60m' and self.cpt_dataset == 'starcoder' and self.train_tokens == 10:
+            name = f'{pre_name}-CPT-{self.cpt_dataset}-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        else:
+            name = f'{pre_name}-CPT-{self.cpt_dataset}-tk{self.train_tokens}M-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
         if self.optimizer == 'muon':
             muon_lr = f'{self.muon_learning_rate:.2e}'.replace('e-0', 'e-')
             name += f'-muon_lr{muon_lr}'
@@ -1206,7 +1209,10 @@ class CPTModel(Artifact):
         remote_folder = os.path.join(gs_root, self.relpath)
 
         # 1. Load Pretrained Checkpoint
-        pre_ckpt_rel = self.pretrained_model.checkpoint_relpath
+        if self.step != 'final':
+            pre_ckpt_rel = f"{self.pretrained_model.relpath}/{self.step}-unsharded"
+        else:
+            pre_ckpt_rel = self.pretrained_model.checkpoint_relpath
         if self.use_checkpoint_cache:
             pre_root = G.get_cpt_checkpoint_cache_dir()
         else:
@@ -1426,7 +1432,7 @@ class ModelEvaluation(Artifact):
         return found
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'flame', 'time': "1-00:00:00", "qos": "flame-32gpu_qos"}
+        return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'general', 'time': '1-00:00:00'}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
@@ -1632,7 +1638,7 @@ class ModelEvaluationDownstreamOLMo(Artifact):
         return found
 
     def get_requirements(self) -> Dict[str, Any]:
-        return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'flame', 'time': '1-00:00:00', 'qos': 'flame-32gpu_qos'}
+        return {'gres': 'gpu:1', 'nodes': 1, 'cpus': 4, 'mem': '256GB', 'partition': 'general', 'time': '1-00:00:00'}
 
     def construct(self, builder: Task):
         local_root = G.get_random_local_path()
