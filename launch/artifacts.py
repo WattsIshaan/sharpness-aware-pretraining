@@ -1514,7 +1514,8 @@ class ModelEvaluationDownstream(Artifact):
     Evaluate an HFModel on downstream tasks using the olmes evaluation framework.
     """
     model: "HFModel | SFTModel"
-    tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
+    # tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
+    tasks: tuple = ('gsm8k::olmes','gsm8k::tulu', 'codex_humaneval::tulu', 'codex_humanevalplus::tulu', 'ifeval::tulu', "hellaswag:rc::olmes", "hellaswag:mc::olmes", "winogrande:rc::olmes", "winogrande:mc::olmes", "arc_challenge:rc::olmes", "arc_challenge:mc::olmes")
     batch_size: int = 8
     load_in_4bit: bool = False
     load_in_8bit: bool = False
