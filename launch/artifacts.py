@@ -143,59 +143,74 @@ LIST_OF_CPT_FILES = {
 
     },
     "dolmino": {
-        "tulu": {
-            "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
-            "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
-            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}},
+        # "tulu": {
+        #     "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
+        #     "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
+        #     "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}},
+        # },
+        # "starcoder": {
+        #     "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
+        #     "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
+        #     "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}},
+        # },
+        # "musicpile": {
+        #     "data_paths": ["musicpile/train/input_ids.npy"],
+        #     "mask_paths": ["musicpile/train/label_mask.npy"],
+        #     "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}},
+        # },
+        # "alpaca": {
+        #     "data_paths": ["tatsu-lab_alpaca/train/input_ids.npy"],
+        #     "mask_paths": ["tatsu-lab_alpaca/train/label_mask.npy"],
+        #     "val": {"alpaca-validation": {"data": ['tatsu-lab_alpaca/val/input_ids-alpaca.npy'], "masks": ['tatsu-lab_alpaca/val/label_mask.npy']}},
+        #     "train_tokens": 3.6,
+        # },
+        # "gsm8k": {
+        #     "data_paths": ["openai_gsm8k/train/input_ids.npy"],
+        #     "mask_paths": ["openai_gsm8k/train/label_mask.npy"],
+        #     "val": {"gsm8k-validation": {"data": ['openai_gsm8k/val/input_ids-gsm8k.npy'], "masks": ['openai_gsm8k/val/label_mask.npy']}},
+        #     "train_tokens": 1.2,
+        # },
+        # "siqa": {
+        #     "data_paths": ["allenai_social_i_qa/train/input_ids.npy"],
+        #     "mask_paths": ["allenai_social_i_qa/train/label_mask.npy"],
+        #     "val": {"siqa-validation": {"data": ['allenai_social_i_qa/val/input_ids-siqa.npy'], "masks": ['allenai_social_i_qa/val/label_mask.npy']}},
+        #     "train_tokens": 1.18,
+        # },
+        # "open-platypus": {
+        #     "data_paths": ["garage-bAInd_Open-Platypus/train/input_ids.npy"],
+        #     "mask_paths": ["garage-bAInd_Open-Platypus/train/label_mask.npy"],
+        #     "val": {"open-platypus-validation": {"data": ['garage-bAInd_Open-Platypus/val/input_ids-open-platypus.npy'], "masks": ['garage-bAInd_Open-Platypus/val/label_mask.npy']}},
+        #     "train_tokens": 7,
+        # },
+        # "stackmathqa": {
+        #     "data_paths": ["math-ai_StackMathQA/train/input_ids.npy"],
+        #     "mask_paths": ["math-ai_StackMathQA/train/label_mask.npy"],
+        #     "val": {"stackmathqa-validation": {"data": ['math-ai_StackMathQA/val/input_ids-stackmathqa.npy'], "masks": ['math-ai_StackMathQA/val/label_mask.npy']}},
+        # },
+        # "helpsteer": {
+        #     "data_paths": ["nvidia_HelpSteer/train/input_ids.npy"],
+        #     "mask_paths": ["nvidia_HelpSteer/train/label_mask.npy"],
+        #     "val": {"helpsteer-validation": {"data": ['nvidia_HelpSteer/val/input_ids-helpsteer.npy'], "masks": ['nvidia_HelpSteer/val/label_mask.npy']}},
+        # },
+        # "codealpaca": {
+        #     "data_paths": ["HuggingFaceH4_CodeAlpaca_20K/train/input_ids.npy"],
+        #     "mask_paths": ["HuggingFaceH4_CodeAlpaca_20K/train/label_mask.npy"],
+        #     "val": {"codealpaca-validation": {"data": ['HuggingFaceH4_CodeAlpaca_20K/val/input_ids-codealpaca.npy'], "masks": ['HuggingFaceH4_CodeAlpaca_20K/val/label_mask.npy']}},
+        # },
+        "meta-math": {
+            "data_paths": ["meta-math_MetaMathQA/train/input_ids.npy"],
+            "mask_paths": ["meta-math_MetaMathQA/train/label_mask.npy"],
+            "val": {"meta-math-validation": {"data": ['meta-math_MetaMathQA/val/input_ids-metamath.npy'], "masks": ['meta-math_MetaMathQA/val/label_mask.npy']}},
         },
-        "starcoder": {
-            "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
-            "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
-            "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}},
+        "magicoder": {
+            "data_paths": ["ise-uiuc_Magicoder-Evol-Instruct-110K/train/input_ids.npy"],
+            "mask_paths": ["ise-uiuc_Magicoder-Evol-Instruct-110K/train/label_mask.npy"],
+            "val": {"magicoder-validation": {"data": ['ise-uiuc_Magicoder-Evol-Instruct-110K/val/input_ids-magicoder.npy'], "masks": ['ise-uiuc_Magicoder-Evol-Instruct-110K/val/label_mask.npy']}},
         },
-        "musicpile": {
-            "data_paths": ["musicpile/train/input_ids.npy"],
-            "mask_paths": ["musicpile/train/label_mask.npy"],
-            "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}},
-        },
-        "alpaca": {
-            "data_paths": ["tatsu-lab_alpaca/train/input_ids.npy"],
-            "mask_paths": ["tatsu-lab_alpaca/train/label_mask.npy"],
-            "val": {"alpaca-validation": {"data": ['tatsu-lab_alpaca/val/input_ids-alpaca.npy'], "masks": ['tatsu-lab_alpaca/val/label_mask.npy']}},
-            "train_tokens": 3.6,
-        },
-        "gsm8k": {
-            "data_paths": ["openai_gsm8k/train/input_ids.npy"],
-            "mask_paths": ["openai_gsm8k/train/label_mask.npy"],
-            "val": {"gsm8k-validation": {"data": ['openai_gsm8k/val/input_ids-gsm8k.npy'], "masks": ['openai_gsm8k/val/label_mask.npy']}},
-            "train_tokens": 1.2,
-        },
-        "siqa": {
-            "data_paths": ["allenai_social_i_qa/train/input_ids.npy"],
-            "mask_paths": ["allenai_social_i_qa/train/label_mask.npy"],
-            "val": {"siqa-validation": {"data": ['allenai_social_i_qa/val/input_ids-siqa.npy'], "masks": ['allenai_social_i_qa/val/label_mask.npy']}},
-            "train_tokens": 1.18,
-        },
-        "open-platypus": {
-            "data_paths": ["garage-bAInd_Open-Platypus/train/input_ids.npy"],
-            "mask_paths": ["garage-bAInd_Open-Platypus/train/label_mask.npy"],
-            "val": {"open-platypus-validation": {"data": ['garage-bAInd_Open-Platypus/val/input_ids-open-platypus.npy'], "masks": ['garage-bAInd_Open-Platypus/val/label_mask.npy']}},
-            "train_tokens": 7,
-        },
-        "stackmathqa": {
-            "data_paths": ["math-ai_StackMathQA/train/input_ids.npy"],
-            "mask_paths": ["math-ai_StackMathQA/train/label_mask.npy"],
-            "val": {"stackmathqa-validation": {"data": ['math-ai_StackMathQA/val/input_ids-stackmathqa.npy'], "masks": ['math-ai_StackMathQA/val/label_mask.npy']}},
-        },
-        "helpsteer": {
-            "data_paths": ["nvidia_HelpSteer/train/input_ids.npy"],
-            "mask_paths": ["nvidia_HelpSteer/train/label_mask.npy"],
-            "val": {"helpsteer-validation": {"data": ['nvidia_HelpSteer/val/input_ids-helpsteer.npy'], "masks": ['nvidia_HelpSteer/val/label_mask.npy']}},
-        },
-        "codealpaca": {
-            "data_paths": ["HuggingFaceH4_CodeAlpaca_20K/train/input_ids.npy"],
-            "mask_paths": ["HuggingFaceH4_CodeAlpaca_20K/train/label_mask.npy"],
-            "val": {"codealpaca-validation": {"data": ['HuggingFaceH4_CodeAlpaca_20K/val/input_ids-codealpaca.npy'], "masks": ['HuggingFaceH4_CodeAlpaca_20K/val/label_mask.npy']}},
+        "tuluv2": {
+            "data_paths": ["allenai_tulu-3-sft-olmo-2-mixture-0225/train/input_ids.npy"],
+            "mask_paths": ["allenai_tulu-3-sft-olmo-2-mixture-0225/train/label_mask.npy"],
+            "val": {"tuluv2-validation": {"data": ['allenai_tulu-3-sft-olmo-2-mixture-0225/val/input_ids-tuluv2.npy'], "masks": ['allenai_tulu-3-sft-olmo-2-mixture-0225/val/label_mask.npy']}},
         },
     },
 }

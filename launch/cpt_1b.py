@@ -4,40 +4,52 @@ from experiments import ArtifactSet  # type: ignore
 from launch.artifacts import CPTModel, ModelEvaluation, ModelEvaluationDownstreamOLMo
 
 CPT_DATASET_INFO = {
-    "alpaca": {
-        "cpt_lr": [5e-6, 8e-6, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4],
-        "cpt_token": [20],
+    # "alpaca": {
+    #     "cpt_lr": [5e-6, 8e-6, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4],
+    #     "cpt_token": [20],
+    # },
+    # "codealpaca": {
+    #     "cpt_lr": [1e-6, 2e-6, 3e-6, 4e-6, 5e-6],
+    #     "cpt_token": [20],
+    # },
+    # "gsm8k": {
+    #     "cpt_lr": [5e-6, 8e-6, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4],
+    #     "cpt_token": [20],
+    # },
+    # "musicpile": {
+    #     "cpt_lr": [2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4],
+    #     "cpt_token": [50],
+    # },
+    # "siqa": {
+    #     "cpt_lr": [3e-6, 5e-6, 1e-5, 3e-5, 5e-5, 1e-4],
+    #     "cpt_token": [20],
+    # },
+    # "stackmathqa": {
+    #     "cpt_lr": [1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4],
+    #     "cpt_token": [50],
+    # },
+    # "tulu": {
+    #     "cpt_lr": [2e-6, 4e-6, 8e-6, 1e-5, 2e-5, 4e-5],
+    #     "cpt_token": [50],
+    # },
+    "meta-math": {
+        "cpt_lr": [2e-5, 4e-5, 8e-5, 1e-4, 2e-4],
+        "cpt_token": [80],
     },
-    "codealpaca": {
-        "cpt_lr": [1e-6, 2e-6, 3e-6, 4e-6, 5e-6],
-        "cpt_token": [20],
-    },
-    "gsm8k": {
-        "cpt_lr": [5e-6, 8e-6, 1e-5, 2e-5, 4e-5, 8e-5, 1e-4],
-        "cpt_token": [20],
-    },
-    "musicpile": {
-        "cpt_lr": [2e-5, 4e-5, 8e-5, 1e-4, 2e-4, 4e-4],
+    "magicoder": {
+        "cpt_lr": [2e-5, 4e-5, 8e-5, 1e-4, 2e-4],
         "cpt_token": [50],
     },
-    "siqa": {
-        "cpt_lr": [3e-6, 5e-6, 1e-5, 3e-5, 5e-5, 1e-4],
-        "cpt_token": [20],
-    },
-    "stackmathqa": {
-        "cpt_lr": [1e-5, 2e-5, 4e-5, 8e-5, 1e-4, 2e-4],
-        "cpt_token": [50],
-    },
-    "tulu": {
-        "cpt_lr": [2e-6, 4e-6, 8e-6, 1e-5, 2e-5, 4e-5],
-        "cpt_token": [50],
+    "tuluv2": {
+        "cpt_lr": [2e-6, 4e-6, 8e-6, 1e-5, 2e-5],
+        "cpt_token": [100],
     },
 }
 
 def build_cpt_models(midtrained_models: ArtifactSet) -> ArtifactSet:
     # for i, dataset in enumerate(["alpaca", "codealpaca", "gsm8k", "siqa"]):
     # for i, dataset in enumerate(["stackmathqa", "musicpile"]):
-    for i, dataset in enumerate(["tulu"]):
+    for i, dataset in enumerate(["tuluv2", "meta-math", "magicoder"]):
         if i == 0:
             cpt_models = midtrained_models.map_flatten(
                 lambda midtrained_model: ArtifactSet.from_product(
@@ -54,7 +66,6 @@ def build_cpt_models(midtrained_models: ArtifactSet) -> ArtifactSet:
                         scheduler_alpha_f=0.1,
                         cpt_gpus=2,
                         use_checkpoint_cache=False,
-                        step="step4000"
                     )
                 )
             )
@@ -74,7 +85,6 @@ def build_cpt_models(midtrained_models: ArtifactSet) -> ArtifactSet:
                     scheduler_alpha_f=0.1,
                     cpt_gpus=2,
                     use_checkpoint_cache=False,
-                    step="step4000"
                     )
                 )
             )
