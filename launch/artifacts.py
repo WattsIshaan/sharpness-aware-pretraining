@@ -1515,11 +1515,14 @@ class ModelEvaluationDownstream(Artifact):
     """
     model: "HFModel | SFTModel"
     # tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
-    tasks: tuple = ('gsm8k::olmes','gsm8k::tulu', 'codex_humaneval::tulu', 'codex_humanevalplus::tulu', 'ifeval::tulu', "hellaswag:rc::olmes", "hellaswag:mc::olmes", "winogrande:rc::olmes", "winogrande:mc::olmes", "arc_challenge:rc::olmes", "arc_challenge:mc::olmes")
+    tasks: tuple = ('gsm8k::tulu', 'codex_humaneval::tulu', 'codex_humanevalplus::tulu', 'ifeval::tulu', "hellaswag:rc::olmes", "hellaswag:mc::olmes", "winogrande:rc::olmes", "winogrande:mc::olmes", "arc_challenge:rc::olmes", "arc_challenge:mc::olmes")
     batch_size: int = 8
     load_in_4bit: bool = False
     load_in_8bit: bool = False
     gpu_count: int = 1
+    #: Passed to olmes as model_args chat_template=… (HF checkpoints without jinja chat_template).
+    #: "tokenize_data" matches new_utils/tokenize_data.py; use "tulu" for the open-instruct Tulu string format.
+    olmes_chat_template: str = 'tokenize_data'
 
     @property
     def run_name(self) -> str:
@@ -1580,6 +1583,7 @@ class ModelEvaluationDownstream(Artifact):
         # Build model-args string for olmes
         model_args_parts = [
             f'model_path={local_model_path}',
+            f'chat_template={self.olmes_chat_template}',
         ]
         if self.load_in_4bit:
             model_args_parts.append('load_in_4bit=true')

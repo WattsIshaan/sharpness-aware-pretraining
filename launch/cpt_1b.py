@@ -41,7 +41,7 @@ CPT_DATASET_INFO = {
         "cpt_token": [50],
     },
     "tuluv2": {
-        "cpt_lr": [2e-6, 4e-6, 8e-6, 1e-5, 2e-5, 3e-5],
+        "cpt_lr": [1e-5, 2e-5, 3e-5, 4e-5, 6e-5, 8e-5],
         "cpt_token": [100],
     },
 }
