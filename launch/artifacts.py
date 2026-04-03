@@ -143,21 +143,21 @@ LIST_OF_CPT_FILES = {
 
     },
     "dolmino": {
-        # "tulu": {
-        #     "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
-        #     "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
-        #     "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}},
-        # },
+        "tulu": {
+            "data_paths": ["allenai_tulu-3-sft-mixture/train/input_ids.npy"],
+            "mask_paths": ["allenai_tulu-3-sft-mixture/train/label_mask.npy"],
+            "val": {"tulu-validation": {"data": ['allenai_tulu-3-sft-mixture/val/input_ids-tulu.npy'], "masks": ['allenai_tulu-3-sft-mixture/val/label_mask.npy']}},
+        },
         # "starcoder": {
         #     "data_paths": ["bigcode_starcoderdata/train/input_ids.npy"],
         #     "mask_paths": ["bigcode_starcoderdata/train/label_mask.npy"],
         #     "val": {"starcoder-validation": {"data": ['bigcode_starcoderdata/val/input_ids-starcoder.npy'], "masks": ['bigcode_starcoderdata/val/label_mask.npy']}},
         # },
-        # "musicpile": {
-        #     "data_paths": ["musicpile/train/input_ids.npy"],
-        #     "mask_paths": ["musicpile/train/label_mask.npy"],
-        #     "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}},
-        # },
+        "musicpile": {
+            "data_paths": ["musicpile/train/input_ids.npy"],
+            "mask_paths": ["musicpile/train/label_mask.npy"],
+            "val": {"musicpile-validation": {"data": ['musicpile/val/input_ids-musicpile.npy'], "masks": ['musicpile/val/label_mask.npy']}},
+        },
         # "alpaca": {
         #     "data_paths": ["tatsu-lab_alpaca/train/input_ids.npy"],
         #     "mask_paths": ["tatsu-lab_alpaca/train/label_mask.npy"],
@@ -182,11 +182,11 @@ LIST_OF_CPT_FILES = {
         #     "val": {"open-platypus-validation": {"data": ['garage-bAInd_Open-Platypus/val/input_ids-open-platypus.npy'], "masks": ['garage-bAInd_Open-Platypus/val/label_mask.npy']}},
         #     "train_tokens": 7,
         # },
-        # "stackmathqa": {
-        #     "data_paths": ["math-ai_StackMathQA/train/input_ids.npy"],
-        #     "mask_paths": ["math-ai_StackMathQA/train/label_mask.npy"],
-        #     "val": {"stackmathqa-validation": {"data": ['math-ai_StackMathQA/val/input_ids-stackmathqa.npy'], "masks": ['math-ai_StackMathQA/val/label_mask.npy']}},
-        # },
+        "stackmathqa": {
+            "data_paths": ["math-ai_StackMathQA/train/input_ids.npy"],
+            "mask_paths": ["math-ai_StackMathQA/train/label_mask.npy"],
+            "val": {"stackmathqa-validation": {"data": ['math-ai_StackMathQA/val/input_ids-stackmathqa.npy'], "masks": ['math-ai_StackMathQA/val/label_mask.npy']}},
+        },
         # "helpsteer": {
         #     "data_paths": ["nvidia_HelpSteer/train/input_ids.npy"],
         #     "mask_paths": ["nvidia_HelpSteer/train/label_mask.npy"],
@@ -336,6 +336,40 @@ for base in LIST_OF_PRETRAIN_FILES:
     base_val = LIST_OF_PRETRAIN_FILES[base]["val"]
     for cpt in LIST_OF_CPT_FILES.get(base, {}):
         LIST_OF_CPT_FILES[base][cpt]["val"].update(base_val)
+
+
+def pretrain_train_memmap_paths_for_ewc_fisher_subsample(
+    pretrain_dataset: str,
+    local_root: str,
+    subsample_tokens_billion: float,
+) -> List[str]:
+    """
+    Local paths to a **prefix** of pretrain **training** memmaps (``data_paths`` / cosine main stage)
+    for EWC Fisher estimation. File count matches ``get_train_files``-style logic.
+    """
+    if pretrain_dataset not in LIST_OF_PRETRAIN_FILES:
+        raise ValueError(
+            f"EWC Fisher on pretrain train requires {pretrain_dataset!r} in LIST_OF_PRETRAIN_FILES "
+            "(or pass ewc_fisher_paths manually in config)."
+        )
+    if subsample_tokens_billion <= 0:
+        raise ValueError("subsample_tokens_billion must be positive")
+
+    info = LIST_OF_PRETRAIN_FILES[pretrain_dataset]
+    data_source = info["data_paths"]
+    n_files = min(
+        math.ceil(subsample_tokens_billion * BILLION / info["tokens_per_file"]) + 1,
+        len(data_source),
+    )
+    n_files = max(1, n_files)
+    log.info(
+        "EWC Fisher pretrain subsample: dataset=%s target≈%.5gB tokens → %d/%d train memmap files",
+        pretrain_dataset,
+        subsample_tokens_billion,
+        n_files,
+        len(data_source),
+    )
+    return [os.path.join(local_root, p) for p in data_source[:n_files]]
 
 
 # --- Helper Functions ---
@@ -1194,7 +1228,7 @@ class CPTModel(Artifact):
 
     @property
     def exists(self) -> bool:
-        # return False
+        return False
         if not Project.config.CHECK_EXISTS_REMOTE:
             return False
         remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
@@ -1344,6 +1378,207 @@ class CPTModel(Artifact):
 
 
 @dataclass(frozen=True)
+class EWC_CPT(Artifact):
+    """CPT finetuning with Elastic Weight Consolidation (``scripts/train_ewc.py``).
+
+    Same inputs and training layout as ``CPTModel``, but checkpoints live under ``EWC_CPT/`` and
+    Fisher uses a subsample of pretrain train memmaps (``ewc_fisher_pretrain_subsample_tokens_billion``).
+    """
+
+    train_tokens: int
+    pretrained_model: PretrainedModel | AnnealedModel | AnnealedModel2 | MidtrainedModel
+    cpt_dataset: str
+    optimizer: str = 'adamw'
+    learning_rate: float = 6e-4
+    weight_decay: float = 0.1
+    batch_size: int = 64
+    scheduler_name: str = 'cosine_with_warmup'
+    scheduler_alpha_f: float = 0.1
+    cpt_gpus: int = 1
+    muon_learning_rate: float = 5e-4
+    muon_weight_decay: float = 0.1
+    muon_momentum: float = 0.95
+    use_checkpoint_cache: bool = True
+    step: str = 'final'
+    ewc_lambda: float = 4000.0
+    ewc_fisher_batches: int = 100
+    ewc_fisher_pretrain_subsample_tokens_billion: float = 1.0
+
+    @property
+    def sequence_length(self) -> int:
+        return self.pretrained_model.sequence_length
+
+    @property
+    def relpath(self) -> str:
+        return f'EWC_CPT/{self.cpt_dataset}/{self.run_name}'
+
+    @property
+    def checkpoint_relpath(self) -> str:
+        return f'{self.relpath}/final-unsharded'
+
+    @property
+    def pretrain_dataset(self) -> str:
+        return self.pretrained_model.pretrain_dataset
+
+    @property
+    def run_name(self) -> str:
+        pre_name = self.pretrained_model.run_name
+        lr_str = f'{self.learning_rate:.2e}'.replace('e-0', 'e-')
+        wd_str = f'{self.weight_decay:.0e}'.replace('e-0', 'e-') if self.weight_decay > 0 else '0'
+        base = f'{pre_name}-EWC_CPT-{self.cpt_dataset}-tk{self.train_tokens}M-lr{lr_str}-wd{wd_str}-bs{self.batch_size}'
+        lam = f'{self.ewc_lambda:.2e}'.replace('e-0', 'e-')
+        pt = f'{self.ewc_fisher_pretrain_subsample_tokens_billion:.5g}'.replace('.', 'p')
+        return f'{base}-lam{lam}-fb{self.ewc_fisher_batches}-fisher{pt}B'
+
+    def get_requirements(self) -> Dict[str, Any]:
+        return {
+            'gpus': f"A100_40GB:{str(self.cpt_gpus)}",
+            'nodes': 1,
+            'cpus': self.cpt_gpus * 2,
+            'mem': '64GB',
+            'requeue': True,
+            "partition": 'general',
+            "time": "2-00:00:00"
+        }
+
+    @property
+    def exists(self) -> bool:
+        return False
+        if not Project.config.CHECK_EXISTS_REMOTE:
+            return False
+        remote_path = os.path.join(cast(str, Project.config.GS_PATH), self.checkpoint_relpath)
+        remote_files = G.get_remote_files(subfolder=f'EWC_CPT/{self.cpt_dataset}')
+        found = any(f.startswith(remote_path) for f in remote_files)
+        log.info(f"[EWC_CPT] {'✓ EXISTS' if found else '❌ NOT found'}: {self.cpt_dataset}")
+        return found
+
+    def construct(self, builder: Task):
+        local_root = G.get_random_local_path()
+        save_folder = os.path.join(local_root, self.relpath)
+        gs_root = cast(str, Project.config.GS_PATH)
+        remote_folder = os.path.join(gs_root, self.relpath)
+
+        if self.step != 'final':
+            pre_ckpt_rel = f"{self.pretrained_model.relpath}/{self.step}-unsharded"
+        else:
+            pre_ckpt_rel = self.pretrained_model.checkpoint_relpath
+        if self.use_checkpoint_cache:
+            pre_root = G.get_cpt_checkpoint_cache_dir()
+        else:
+            pre_root = local_root
+        local_pre_path = os.path.join(pre_root, pre_ckpt_rel)
+        builder.rsync_from_gs(os.path.join(gs_root, pre_ckpt_rel), local_pre_path, delete=True, checksum=True, skip_existing=True, check_exists=True, contents=True, )
+
+        dataset_info = LIST_OF_CPT_FILES[self.pretrain_dataset][self.cpt_dataset]
+        train_paths = [os.path.join(local_root, p) for p in dataset_info["data_paths"]]
+        mask_paths = [os.path.join(local_root, p) for p in dataset_info["mask_paths"]]
+        tmp_train_tokens = dataset_info.get("train_tokens", None)
+
+        eval_datasets = {}
+        eval_datasets["pretrain"] = {}
+        eval_datasets["cpt"] = {}
+        # eval_datasets["downstream"] = [
+        #     'winogrande',
+        #     'mmlu_other_var',
+        #     'sciq',
+        #     'hellaswag',
+        #     'copa',
+        #     'openbook_qa',
+        # ]
+        for k, v in dataset_info["val"].items():
+            paths = v.get("data", []) if isinstance(v, dict) else v
+            masks = v.get("masks", None) if isinstance(v, dict) else None
+            if masks is None:
+                eval_datasets["pretrain"][k] = [os.path.join(local_root, p) for p in paths]
+            else:
+                eval_datasets["cpt"][k] = {
+                    "data_paths" : [os.path.join(local_root, p) for p in paths],
+                    "mask_paths" : [os.path.join(local_root, m) for m in masks]
+                }
+
+        if self.pretrain_dataset == "dolmino":
+            del eval_datasets["pretrain"]
+
+        ewc_fisher_paths = pretrain_train_memmap_paths_for_ewc_fisher_subsample(
+            self.pretrain_dataset,
+            local_root,
+            self.ewc_fisher_pretrain_subsample_tokens_billion,
+        )
+
+        train_tokens = self.train_tokens
+        if tmp_train_tokens is not None:
+            log.info(f"Using train tokens from dataset info: {train_tokens}M")
+            train_tokens = tmp_train_tokens
+
+        total_tokens = train_tokens * MILLION
+        total_steps = max(1, total_tokens // (self.batch_size * self.sequence_length))
+        warmup_steps = max(1, int(total_steps * 0.1))
+
+        overrides = {}
+        if self.pretrain_dataset == "dclm":
+            overrides = {'vocab_size': 100278, 'embedding_size': 100352, 'eos_token_id': 100257, 'pad_token_id': 100277}
+
+        exp_name = self.run_name[len(self.run_name)-64+1:] if len(self.run_name) > 64 else self.run_name
+
+        config = get_train_config(
+            run_name=self.run_name,
+            save_folder=save_folder,
+            train_data_paths=train_paths,
+            train_data_label_mask_paths=mask_paths,
+            model_size=self.pretrained_model.model_size,
+            optimizer=self.optimizer,
+            learning_rate=self.learning_rate,
+            weight_decay=self.weight_decay,
+            muon_learning_rate=self.muon_learning_rate,
+            muon_momentum=self.muon_momentum,
+            muon_weight_decay=self.muon_weight_decay,
+            max_duration=f'{train_tokens}e6T',
+            eval_datasets=eval_datasets,
+            decay_embeddings=False if self.pretrained_model.model_size == "1b" else True,
+            seed=6198,
+            model_overrides=overrides,
+            scheduler_name=self.scheduler_name,
+            scheduler_alpha_f=self.scheduler_alpha_f,
+            scheduler_t_warmup=warmup_steps,
+            global_train_batch_size=self.batch_size,
+            device_train_microbatch_size=4,
+            eval_interval=10000,
+            save_interval_unsharded=1000,
+            wandb_project=cast(str, Project.config.PROJECT_NAME),
+            wandb_entity=cast(str, Project.config.WANDB_ENTITY),
+            wandb_id=exp_name,
+            load_path=local_pre_path,
+            reset_optimizer_state=True,
+            tokenizer={'identifier': f'tokenizers/allenai_{"dolma2" if self.pretrain_dataset in ("dclm", "dolmino") else "gpt-neox-olmo-dolma-v1_5"}.json'},
+            dtype='uint32' if self.pretrain_dataset in ("dclm", "dolmino") else 'uint16',
+            ewc_lambda=self.ewc_lambda,
+            ewc_fisher_batches=self.ewc_fisher_batches,
+            ewc_fisher_paths=ewc_fisher_paths,
+        )
+
+        builder.ensure_directory(save_folder)
+        config_path = os.path.join(save_folder, 'config.yaml')
+        builder.create_yaml_file(os.path.join(save_folder, 'config.yaml'), config)
+
+        gs_data_path = cast(str, Project.config.GS_DATA_PATH)
+        for p in (train_paths + mask_paths + [item for sub_dict in eval_datasets["cpt"].values() for sub_list in sub_dict.values() for item in sub_list]):
+            builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
+        if self.pretrain_dataset != "dolmino":
+            for p in [item for sub in eval_datasets["pretrain"].values() for item in sub]:
+                builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
+        for p in ewc_fisher_paths:
+            builder.download_from_gs(p.replace(local_root, gs_data_path), p, directory=False)
+
+        olmo_path = cast(str, Project.config.OLMO_PATH)
+        train_script = os.path.join(olmo_path, 'scripts', 'train_ewc.py')
+        builder.run_command(
+            f'cd {olmo_path} && '
+            f'torchrun --rdzv-endpoint=localhost:0 --rdzv-backend=c10d --nproc_per_node={self.cpt_gpus} {train_script} {config_path}'
+        )
+        builder.upload_to_gs(save_folder, remote_folder, directory=True)
+
+
+@dataclass(frozen=True)
 class PerturbedModel(Artifact):
     base_model: "PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2"
     sigma: float
@@ -1423,7 +1658,7 @@ class PerturbedModel(Artifact):
 
 @dataclass(frozen=True)
 class ModelEvaluation(Artifact):
-    model: "PretrainedModel | CPTModel | AnnealedModel | PerturbedModel | MidtrainedModel | AnnealedModel2"
+    model: "PretrainedModel | CPTModel | EWC_CPT | AnnealedModel | PerturbedModel | MidtrainedModel | AnnealedModel2"
     device: str = 'cuda'
     chunk_size: int = 1024
     hf_model: bool = False
@@ -1459,8 +1694,8 @@ class ModelEvaluation(Artifact):
         builder.rsync_from_gs(os.path.join(cast(str, Project.config.GS_PATH), self.model.checkpoint_relpath), local_model, delete=False, checksum=False, skip_existing=False, check_exists=True, contents=True)
 
         # 2. Gather Eval Data (Unified Logic)
-        eval_meta = (LIST_OF_CPT_FILES[self.model.pretrain_dataset][self.model.cpt_dataset]["val"] 
-                     if isinstance(self.model, CPTModel) else 
+        eval_meta = (LIST_OF_CPT_FILES[self.model.pretrain_dataset][self.model.cpt_dataset]["val"]
+                     if isinstance(self.model, (CPTModel, EWC_CPT)) else
                      LIST_OF_PRETRAIN_FILES[self.model.pretrain_dataset]["val"])
         
         target_evals, target_masks = [], []
@@ -1514,8 +1749,7 @@ class ModelEvaluationDownstream(Artifact):
     Evaluate an HFModel on downstream tasks using the olmes evaluation framework.
     """
     model: "HFModel | SFTModel"
-    # tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
-    tasks: tuple = ('gsm8k::tulu', 'codex_humaneval::tulu', 'codex_humanevalplus::tulu', 'ifeval::tulu', "hellaswag:rc::olmes", "hellaswag:mc::olmes", "winogrande:rc::olmes", "winogrande:mc::olmes", "arc_challenge:rc::olmes", "arc_challenge:mc::olmes")
+    tasks: tuple = ('core_9mcqa::olmes', 'mmlu:mc::olmes', 'olmo_2_generative::olmes', 'olmo_2_heldout::olmes')
     batch_size: int = 8
     load_in_4bit: bool = False
     load_in_8bit: bool = False
@@ -1630,7 +1864,7 @@ class ModelEvaluationDownstreamOLMo(Artifact):
     script (new_utils/evaluate_downstream.py) instead of olmes.
     Works with both OLMo 1 and OLMo 2 checkpoints.
     """
-    model: "PretrainedModel | CPTModel | AnnealedModel | MidtrainedModel | AnnealedModel2"
+    model: "PretrainedModel | CPTModel | EWC_CPT | AnnealedModel | MidtrainedModel | AnnealedModel2"
     tasks: tuple = ('winogrande', 'mmlu_other_var', 'sciq', 'hellaswag', 'copa', 'openbook_qa')
     batch_size: int = 8
     subset_num_batches: int = 0
@@ -1704,7 +1938,7 @@ class HFModel(Artifact):
     """
     Convert a `PretrainedModel` checkpoint to a HuggingFace-compatible format and upload to GS.
     """
-    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2 | CPTModel
+    pretrained_model: PretrainedModel | AnnealedModel | MidtrainedModel | AnnealedModel2 | CPTModel | EWC_CPT
 
     @property
     def run_name(self) -> str:
@@ -1719,6 +1953,10 @@ class HFModel(Artifact):
     def checkpoint_relpath(self) -> str:
         # Directory in GS where the converted HF checkpoint will live.
         return self.relpath
+
+    @property
+    def cpt_dataset(self) -> str:
+        return self.pretrained_model.cpt_dataset
     
     @property
     def pretrain_dataset(self) -> str:
@@ -1782,7 +2020,7 @@ class HFModel(Artifact):
             tokenizer_file = "allenai_gpt-neox-olmo-dolma-v1_5.json"
         tokenizer_path = os.path.join(tokenizer_dir, tokenizer_file)
 
-        if isinstance(self.pretrained_model, MidtrainedModel) or isinstance(self.pretrained_model, CPTModel):
+        if isinstance(self.pretrained_model, (MidtrainedModel, CPTModel, EWC_CPT)):
             convert_script = os.path.join(olmo_path, "scripts", "convert_olmo2_to_hf.py")
             cmd_parts = [
                 "python",

@@ -1335,6 +1335,29 @@ class TrainConfig(BaseConfig):
     can be compared using `scripts/compare_module_outputs.py`.
     """
 
+    ewc_lambda: Optional[float] = None
+    """
+    If set, use Elastic Weight Consolidation (see ``scripts/train_ewc.py``): adds
+    ``(λ/2) Σ_i F_i (θ_i - θ*_i)²`` to the loss, where ``F`` is the diagonal Fisher
+    at the loaded checkpoint and ``θ*`` are those checkpoint weights.
+    """
+
+    ewc_fisher_batches: int = 100
+    """
+    Number of training batches used to estimate the diagonal Fisher matrix for EWC.
+    """
+
+    ewc_fisher_paths: Optional[List[str]] = None
+    """
+    If set, the Fisher diagonal is estimated from these memmap paths (e.g. a subsample of pretrain
+    **training** shards) instead of the CPT training ``data.paths``. Must match tokenizer / dtype.
+    """
+
+    ewc_fisher_label_mask_paths: Optional[List[str]] = None
+    """
+    Optional label-mask memmap paths paired 1:1 with ``ewc_fisher_paths`` (same semantics as training data).
+    """
+
     @property
     def autocast_precision(self) -> torch.dtype:
         if self.precision == "amp_bf16":

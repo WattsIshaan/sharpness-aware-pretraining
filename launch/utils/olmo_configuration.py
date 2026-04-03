@@ -214,6 +214,10 @@ def get_train_config(
     try_load_latest_save=True,
     max_grad_norm=1.0,
     load_path=None,
+    ewc_lambda=None,
+    ewc_fisher_batches=100,
+    ewc_fisher_paths=None,
+    ewc_fisher_label_mask_paths=None,
     restore_dataloader=False,
     reset_optimizer_state=False,
     model_overrides=None,
@@ -255,6 +259,10 @@ def get_train_config(
         save_num_unsharded_checkpoints_to_keep: Number of checkpoints to keep (-1 for all)
         max_grad_norm: Maximum gradient norm for clipping
         load_path: Path to checkpoint to load (for CPT)
+        ewc_lambda: If set, enable Elastic Weight Consolidation (``scripts/train_ewc.py``)
+        ewc_fisher_batches: Batches used to estimate diagonal Fisher for EWC
+        ewc_fisher_paths: Memmap paths for Fisher (e.g. pretrain val); default CPT train if unset
+        ewc_fisher_label_mask_paths: Optional masks paired with ``ewc_fisher_paths``
         restore_dataloader: Whether to restore dataloader state
         reset_optimizer_state: Whether to reset optimizer state (for CPT)
         model_overrides: Dict of model config overrides
@@ -380,7 +388,7 @@ def get_train_config(
             'name': run_name,
             'project': wandb_project,
             'entity': wandb_entity,
-            'id': wandb_id,
+            # 'id': wandb_id,
             'resume': wandb_resume,
         }
     
@@ -428,6 +436,14 @@ def get_train_config(
         config['restore_dataloader'] = restore_dataloader
         config['no_pre_train_checkpoint'] = True
         config['reset_optimizer_state'] = reset_optimizer_state
+
+    if ewc_lambda is not None:
+        config['ewc_lambda'] = ewc_lambda
+        config['ewc_fisher_batches'] = ewc_fisher_batches
+    if ewc_fisher_paths is not None:
+        config['ewc_fisher_paths'] = ewc_fisher_paths
+    if ewc_fisher_label_mask_paths is not None:
+        config['ewc_fisher_label_mask_paths'] = ewc_fisher_label_mask_paths
     
     # Apply any additional overrides
     config.update(overrides)

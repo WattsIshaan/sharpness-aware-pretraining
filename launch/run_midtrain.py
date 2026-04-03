@@ -14,11 +14,11 @@ from launch.sft import build_sft_models, build_sft_model_evaluations
 OPTIM_INFO = {
     "adamw": [5e-2],
     # "sam": [5e-2, 1e-1],
-    "sam": [5e-2],
+    "sam": [5e-2, 1e-1],
 }
 
 # for i, optim in enumerate(["adamw", "sam"]):
-for i, optim in enumerate(["adamw"]):
+for i, optim in enumerate(["sam", "adamw"]):
     if i == 0:
         midtrained_models = ArtifactSet.from_product(
             cls=MidtrainedModel,
@@ -43,7 +43,6 @@ for i, optim in enumerate(["adamw"]):
                 'per_device_train_batch_size': [4],
                 'midtrain_tokens': [50],
                 'global_train_batch_size': [1024],
-                'train_tokens': [4],
                 # 'anneal_sam': [True],
                 # 'sam_per_microbatch': [True, False],
             }
@@ -55,7 +54,7 @@ cpt_models = build_cpt_models(midtrained_models)
 cpt_model_evaluations = build_cpt_model_evaluations(cpt_models)
 
 cpt_hf_models = cpt_models.map(lambda model: HFModel(pretrained_model=model))
-cpt_hf_model_evaluations = cpt_hf_models.map(lambda model: ModelEvaluationDownstream(model=model, batch_size=16))
+cpt_hf_model_evaluations = cpt_hf_models.map(lambda model: ModelEvaluationDownstream(model=model))
 
 hf_models = midtrained_models.map(lambda model: HFModel(pretrained_model=model))
 hf_model_evaluations = hf_models.map(lambda model: ModelEvaluationDownstream(model=model))
@@ -63,16 +62,16 @@ hf_model_evaluations_olmo = hf_models.map(lambda model: ModelEvaluationDownstrea
 
 
 
-# quantized_model_evaluations = build_quantized_model_evaluation_downstreams(hf_models)
+quantized_model_evaluations = hf_models.map(lambda model: ModelEvaluationDownstream(model=model, load_in_4bit=True))
 quantized_model_evaluations_olmo = build_quantized_model_evaluation_downstreams_olmo(hf_models)
 
-sft_models = build_sft_models(hf_models)
-sft_model_evaluations = build_sft_model_evaluations(sft_models)
+# sft_models = build_sft_models(hf_models)
+# sft_model_evaluations = build_sft_model_evaluations(sft_models)
 
 # Setup command for the executor
 setup_command = ' && '.join([
     'source ~/miniconda3/etc/profile.d/conda.sh',
-    'conda activate forgetting2'
+    'conda activate forgetting'
 ])
 
 # Create executor
@@ -90,10 +89,10 @@ executor.stage('cpt_hf_eval', cpt_hf_model_evaluations)
 executor.stage('hf', hf_models)
 executor.stage('hf_eval', hf_model_evaluations)
 executor.stage('hf_eval_olmo', hf_model_evaluations_olmo)
-# executor.stage('q_eval', quantized_model_evaluations)
+executor.stage('q_eval', quantized_model_evaluations)
 executor.stage('q_eval_olmo', quantized_model_evaluations_olmo)
-executor.stage('sft', sft_models)
-executor.stage('sft_eval', sft_model_evaluations)
+# executor.stage('sft', sft_models)
+# executor.stage('sft_eval', sft_model_evaluations)
 
 if __name__ == '__main__':
     executor.auto_cli()
