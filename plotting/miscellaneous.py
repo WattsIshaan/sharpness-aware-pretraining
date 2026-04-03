@@ -128,7 +128,7 @@ def perturbation_lrs_steps(results):
             fig.legend(handles, labels, fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=LEGEND_PARAM["BBOX_TO_ANCHOR"], ncol=len(handles))
             plt.tight_layout()  # type: ignore
 
-            plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/perturbation_pareto_lrs.pdf"), bbox_inches="tight")
+            plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/perturbation_pareto_lrs.png"), bbox_inches="tight")
             plt.close()
 
 
@@ -238,7 +238,7 @@ def pareto_lrs_steps(results):
             # fig.legend(handles, labels, fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=LEGEND_PARAM["BBOX_TO_ANCHOR"], ncol=len(handles))
             plt.tight_layout()  # type: ignore
             
-            plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/perturbation_pareto_steps.pdf"), bbox_inches="tight")
+            plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/perturbation_pareto_steps.png"), bbox_inches="tight")
             plt.close()
 
         
@@ -324,7 +324,7 @@ def pt_lr_tuning(results):
     fig.legend(all_handles, all_labels, title=XLABEL["TOKEN_RATIO"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=LEGEND_PARAM["BBOX_TO_ANCHOR"], ncol=len(all_handles), fontsize=FONTSIZE["LEGEND"], title_fontsize=FONTSIZE["LEGEND"])
     plt.tight_layout()
     plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pt_lr_tuning.pdf"), bbox_inches="tight")
+    plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pt_lr_tuning.png"), bbox_inches="tight")
     plt.close()
 
 
@@ -690,7 +690,7 @@ def pareto_ptlr_lrs_pert(results):
             fig.legend(handles, labels, fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=(0.66, -0.15), ncol=len(handles))
             plt.tight_layout()  # type: ignore
 
-            plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pareto_ptlr_pert_lrs.pdf"), bbox_inches="tight")
+            plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pareto_ptlr_pert_lrs.png"), bbox_inches="tight")
             plt.close()
 
 
@@ -805,7 +805,7 @@ def pareto_pert_quant(results):
         fig.legend(handles, labels, fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=(0.5, -0.25), ncol=2)
         plt.tight_layout()  # type: ignore
 
-        plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pareto_pert_quant.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pareto_pert_quant.png"), bbox_inches="tight")
         plt.close()
 
 
@@ -941,7 +941,7 @@ def pareto_optim_lrs_quant(results):
         fig.legend(handles, labels, fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=(0.5, -0.25), ncol=2)
         plt.tight_layout()  # type: ignore
 
-        plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pareto_optim_lrs_quant.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/pareto_optim_lrs_quant.png"), bbox_inches="tight")
         plt.close()
 
 def lr_schematic():
@@ -997,12 +997,29 @@ def lr_schematic():
             wsd_lr[i] = lr_min + (lr_max - lr_min) * (1 - progress)
 
     # --------------------
+    # Linear decay (same warmup as cosine / WSD; then linear lr_max → lr_min to end)
+    # --------------------
+    linear_lr = np.zeros_like(x)
+    for i, t in enumerate(x):
+        if t < warmup_end:
+            linear_lr[i] = warmup_lr(t)
+        else:
+            progress = (t - warmup_end) / (T - warmup_end)
+            linear_lr[i] = lr_max + (lr_min - lr_max) * progress
+
+    # --------------------
     # Plot
     # --------------------
     plt.figure(figsize=(7, 4))
 
     plt.plot(x, cosine_lr, label=LRS_MAP["cosine"], color=COLOR_MAP["cosine"])
-    plt.plot(x, wsd_lr, label=LRS_MAP["wsd_adamw"], color=COLOR_MAP["wsd_adamw"])
+    plt.plot(x, wsd_lr, label=LRS_MAP["wsd_adamw"] + "10%", color=COLOR_MAP["wsd_adamw"])
+    plt.plot(
+        x,
+        linear_lr,
+        label="Linear decay",
+        color="crimson",
+    )
 
     # Highlight WSD decay phase
     # plt.axvspan(
@@ -1034,8 +1051,8 @@ def lr_schematic():
     plt.tick_params(axis='both', which='minor', labelsize=FONTSIZE["TICKS"])
     # plt.grid(True)
     plt.tight_layout()
-    plt.legend(fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=(0.5, -0.35), ncol=2, title_fontsize=FONTSIZE["LEGEND"])
-    plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/lr_schematic.pdf"), bbox_inches="tight")
+    plt.legend(fontsize=FONTSIZE["LEGEND"], loc=LEGEND_PARAM["LOC"], bbox_to_anchor=(0.5, -0.35), ncol=3, title_fontsize=FONTSIZE["LEGEND"])
+    plt.savefig(os.path.join(RESULTS_DIR, f"plots/miscellaneous/lr_schematic.png"), bbox_inches="tight")
     plt.close()
 
 

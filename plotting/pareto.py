@@ -1145,15 +1145,15 @@ def main(args):
         pareto_optim_size(results)
         pareto_lrs_size(results)
     elif args.plot == "all":
-        pareto_optim_dataset(results)
+        # pareto_optim_dataset(results)
         # pareto_optim_size(results)
         # pareto_lrs_size(results)
-        # pareto_optim_token(results)
+        pareto_optim_token(results)
         # pareto_optim_compute(results)
         # pareto_lrs(results, anneal_match="token", single=True)
         # pareto_lrs(results, anneal_match="token", single=False)
         # pareto_pt_lr(results)
-        pareto_lrs_dataset(results)
+        # pareto_lrs_dataset(results)
         # pareto_optim_cpt_token(results)
     else:
         raise ValueError(f"Invalid plot: {args.plot}")

@@ -24,6 +24,10 @@ CPT_DATASET_MAP = {
     "gsm8k": "GSM8K",
     "siqa": "SIQA",
     "stackmathqa": "StackMathQA",
+    "alpaca": "Alpaca",
+    "codealpaca": "CodeAlpaca",
+    "meta-math": "Meta-Math",
+    "magicoder": "Magicoder",
 }
 DOWNSTREAM_TASK_MAP = {
     "winogrande": "Winogrande",
@@ -59,6 +63,7 @@ LEGEND_PARAM = {
 COLOR_MAP = {
     "adamw": "royalblue",
     "sam": "darkorange",
+    "sam_rho1e-1": "red",
     "wsd_sam": "violet",
     "wsd_adamw": "forestgreen",
     "cosine_adamw": "royalblue",

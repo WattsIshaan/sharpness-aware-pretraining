@@ -7,22 +7,45 @@ import argparse
 def main(midtrain: bool = False):
 
     results = list()
-    if midtrain:
-        raw_results_dir = os.path.join(RESULTS_DIR, "ModelEvaluationDownstream")
-    else:
-        raw_results_dir = os.path.join(RESULTS_DIR, "ModelEvaluation")
+    raw_results_dir = os.path.join(RESULTS_DIR, "ModelEvaluation")
+    # Load downstream task metrics from ModelEvaluationDownstreamOLMo (match by base name)
+    downstream_dir = os.path.join(RESULTS_DIR, "ModelEvaluationDownstreamOLMo")
+    downstream_by_base = {}
+    if os.path.isdir(downstream_dir):
+        for dfile in os.listdir(downstream_dir):
+            if "Midtrain" in dfile or not dfile.endswith("-downstream-eval.json"):
+                continue
+            base = dfile.removesuffix("-downstream-eval.json")
+            dpath = os.path.join(downstream_dir, dfile)
+            try:
+                with open(dpath, "r") as f:
+                    ddata = json.load(f)
+            except Exception:
+                continue
+            task_vals = {}
+            for task in DOWNSTREAM_TASKS:
+                key = TASKNAME_MAP.get(task)
+                if key and key in ddata and ddata[key] is not None:
+                    task_vals[task] = ddata[key]
+            if task_vals:
+                downstream_by_base[base] = task_vals
 
     for file in os.listdir(raw_results_dir):
 
         fname = os.path.join(raw_results_dir, file)
         with open(fname, 'r') as f:
             data = json.load(f)
+        
+        if "Midtrain" in fname:
+            continue
 
         if midtrain:
             fname = fname.removesuffix("-downstream-eval.json")
+            base_eval = None
         else:
             fname = fname.removesuffix("-eval.json")
-        
+            base_eval = file.removesuffix("-eval.json")
+
         # MODEL SIZE
         if midtrain:
             size_match = re.search(r'OLMo2-(\d+)b-', fname)
@@ -60,8 +83,11 @@ def main(midtrain: bool = False):
                     raise ValueError(f"Could not convert perturbation value: {pert_val_str!r}")
 
         is_cpt = 'CPT' in fname
+        is_ewc = 'EWC' in fname
         if perturbation is not None:
             run_type = "perturbed"
+        elif is_ewc:
+            run_type = "ewc"
         elif is_cpt:
             run_type = "cpt"
         elif "quant" in fname:
@@ -160,11 +186,13 @@ def main(midtrain: bool = False):
             else:
                 base_optimizer = optimizer_raw.split("_")[1]
 
-            # Properly extract rho after "-rho", e.g.: "...-bs256-rho1e-1-"
-            rho_match = re.search(r'-rho([0-9eE\+\-\.]+)', fname)
+            # Properly extract rho after "-rho", e.g.: "...-bs256-rho1e-1-".
+            # Do not use [0-9eE...]+ — it captures the "E" in "EWC" (e.g. -rho5e-2-EWC-).
+            _rho_token = r"((?:\d+\.?\d*|\d*\.\d+)(?:[eE][-+]?\d+)?)"
+            rho_match = re.search(rf"-rho{_rho_token}", fname)
             if not rho_match:
                 # fallback: some files may omit '-rho', to maintain old behavior if necessary
-                rho_match = re.search(r'-bs256-([0-9eE\+\-\.]+)-', fname)
+                rho_match = re.search(rf"-bs256-{_rho_token}-", fname)
             rho = rho_match.group(1) if rho_match else "unknown"
 
             if rho != "unknown":
@@ -276,6 +304,22 @@ def main(midtrain: bool = False):
                 cpt_bs = int(cpt_bs_match.group(1))
             else:
                 cpt_bs = None  # Not found; optional
+        
+        ewc_lambda, ewc_bs = None, None
+        if is_ewc:
+            # Match lam immediately before -fb
+            ewc_lambda_fb_match = re.search(r'lam([0-9eE\+\-\.]+)-fb([0-9]+)', fname)
+            if ewc_lambda_fb_match:
+                try:
+                    ewc_lambda = float(ewc_lambda_fb_match.group(1))
+                except Exception:
+                    raise ValueError(f"Unable to convert to Float: {ewc_lambda_fb_match.group(1)!r} in {fname}")
+                try:
+                    ewc_bs = int(ewc_lambda_fb_match.group(2))
+                except Exception:
+                    raise ValueError(f"Unable to convert to Int: {ewc_lambda_fb_match.group(2)!r} in {fname}")
+            else:
+                raise ValueError(f"Unable to find EWC lambda 'lam' before 'fb' in {fname}")
 
         if "hf" in fname:
             model_type = "hf"
@@ -319,6 +363,11 @@ def main(midtrain: bool = False):
             run_info["anneal_percent"] = anneal_percent
             run_info["anneal_optim"] = anneal_optim
             run_info["anneal_match"] = anneal_match
+        if not midtrain and base_eval is not None and base_eval in downstream_by_base:
+            run_info.update(downstream_by_base[base_eval])
+        if is_ewc:
+            run_info["ewc_lambda"] = ewc_lambda
+            run_info["ewc_bs"] = ewc_bs
         results.append(run_info)
 
     with open(os.path.join(RESULTS_DIR, "final_results.json"), "w") as file:
