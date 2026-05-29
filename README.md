@@ -1,6 +1,5 @@
 <div align="center">
   <!-- <img src="https://github.com/allenai/OLMo/assets/8812459/774ac485-a535-4768-8f7c-db7be20f5cc3" width="300"/> -->
-  <img src="https://allenai.org/olmo/olmo-7b-animation.gif" alt="OLMo Logo" width="800" style="margin-left:'auto' margin-right:'auto' display:'block'"/>
   <br>
   <br>
   <h1>OLMo: Open Language Model</h1>
@@ -22,6 +21,8 @@
     <img alt="Discord" src="https://img.shields.io/badge/Discord%20-%20blue?style=flat&logo=discord&label=Ai2&color=%235B65E9">
   </a>
 </p>
+
+# ⚠️ NOTICE ⚠️ This repository is out of date with our more recent releases and is no longer active. For the latest Olmo releases and updates, please visit: https://github.com/allenai/OLMo-core/ 
 
 OLMo is a repository for training and using AI2's state-of-the-art open language models. It is designed by scientists, for scientists.
 
