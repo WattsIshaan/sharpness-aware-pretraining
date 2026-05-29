@@ -1,0 +1,121 @@
+run_name: OLMo-20M-16B-CPT_lr1e-3-LionW
+seed: 42
+dry_run: false
+
+model:
+  d_model: 256
+  n_heads: 8
+  n_layers: 8
+  mlp_ratio: 8
+  weight_tying: false
+  alibi: false
+  rope: true
+  flash_attention: true
+  attention_dropout: 0.0
+  attention_layer_norm: false
+  clip_qkv: null
+  include_bias: false
+  block_type: sequential
+  layer_norm_type: rms
+  layer_norm_with_affine: true
+  layer_norm_eps: 1e-6
+  bias_for_layer_norm: false
+  attention_layer_norm_with_affine: false
+  activation_type: swiglu
+  residual_dropout: 0.0
+  embedding_dropout: 0.0
+  max_sequence_length: 1024
+  vocab_size: 50280
+  embedding_size: 50304
+  eos_token_id: 0
+  pad_token_id: 1
+  init_device: cuda
+  init_fn: normal
+  init_std: 0.02
+  init_cutoff_factor: 3
+
+ddp:
+  grad_sync_mode: batch
+  find_unused_params: false
+
+compile: null
+
+optimizer:
+  name: adamw
+  learning_rate: 1e-3
+  weight_decay: 0
+  eps: 1e-8
+  decay_norm_and_bias: true
+  decay_embeddings: true
+  betas:
+  - 0.9
+  - 0.95
+  metrics_log_interval: 10
+
+scheduler:
+  name: linear_with_warmup
+  t_warmup: 0
+  alpha_f: 0
+
+tokenizer:
+  identifier: tokenizers/allenai_gpt-neox-olmo-dolma-v1_5.json
+  truncate_direction: right
+
+save_folder: /data/user_data/iwatts/catastrophic-forgetting/${run_name}
+remote_save_folder: null
+save_overwrite: false
+
+
+save_interval_unsharded: 100
+save_num_unsharded_checkpoints_to_keep: -1
+
+load_path: /data/user_data/iwatts/catastrophic-forgetting/OLMo-20M-16B-Pretrain-LionW/step61046-unsharded
+
+restore_dataloader: false
+no_pre_train_checkpoint: true
+reset_optimizer_state: true
+
+max_duration: 2e7T
+stop_at: null
+global_train_batch_size: 64
+device_train_microbatch_size: 16
+
+precision: amp_bf16
+distributed_strategy: ddp
+
+gen1_gc_interval: 1
+
+max_grad_norm: 1.0
+max_grad_norm_ratio: null
+
+speed_monitor:
+  window_size: 20
+
+eval_interval: 5000
+eval_subset_num_batches: -1
+device_eval_batch_size: ${device_train_microbatch_size}
+evaluators:
+- label: all-small-ppl-validation
+  data:
+    num_workers: 0
+    drop_last: true
+    datasets:
+      c4_en-validation: 
+      - /data/user_data/iwatts/data/eval_data/v3_small_gptneox20b_c4_en_val_part-0-00000.npy
+      starcoder-val:
+      - /data/user_data/iwatts/data/cpt/starcoder/test/starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00001.npy
+
+data:
+  pad_direction: right
+  num_workers: 4
+  drop_last: true
+  pin_memory: true
+  prefetch_factor: 8
+  persistent_workers: true
+  timeout: 0
+  instance_filter:
+    repetition_max_period: 13
+    repetition_min_period: 1
+    repetition_max_count: 32
+  paths:
+    - /data/user_data/iwatts/data/cpt/starcoder/train/starcoder_v0_decontaminated_doc_only_gpt-neox-olmo-dolma-v1_5_part-00-00000.npy

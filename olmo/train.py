@@ -44,7 +44,7 @@ from .data import IterableDataset
 from .eval import Evaluator
 from .exceptions import OLMoConfigurationError
 from .model import OLMo
-from .optim import Optimizer, Scheduler
+from .optim import Optimizer, Scheduler, SAM
 from .torch_util import (
     SingleAccelerator,
     barrier,
@@ -57,7 +57,15 @@ from .torch_util import (
     synchronize_flag,
     synchronize_value,
 )
-from .util import upload
+from .util import upload, run_sync_cmd
+
+from experiments.runlib import (
+    get_project_config,
+    get_relpath,
+    upload_to_gs,
+    check_exists_gs,
+    download_from_gs
+)
 
 __all__ = ["SpeedMonitor", "LRMonitor", "Trainer"]
 
@@ -407,9 +415,11 @@ class Trainer:
 
         # Reset learning rate and weight decay to the values from the config, not the checkpoint.
         log.info("Resetting learning rate...")
+
         new_learning_rate = self.scheduler.get_lr(
             self.cfg.optimizer.learning_rate, self.scheduler_current, self.scheduler_max
         )
+
         for group in self.optim.param_groups:
             group["lr"] = new_learning_rate
             group["initial_lr"] = self.cfg.optimizer.learning_rate
@@ -444,7 +454,7 @@ class Trainer:
                 log.warning("MPS is available, but no RNG state was provided.")
 
     def _save_checkpoint(
-        self, checkpointer: Checkpointer, checkpoint_type: CheckpointType
+        self, checkpointer: Checkpointer, checkpoint_type: CheckpointType, is_final: bool = False
     ) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         if checkpoint_type == CheckpointType.sharded:
             suffix = ""
@@ -472,7 +482,8 @@ class Trainer:
         if self.indices_file is not None:
             self.indices_file.flush()
 
-        checkpoint_dir = Path(self.cfg.save_folder) / f"step{self.global_step}{suffix}"
+        checkpoint_name = f"final{suffix}" if is_final else f"step{self.global_step}{suffix}"
+        checkpoint_dir = Path(self.cfg.save_folder) / checkpoint_name
         remote_checkpoint_dir: Optional[str] = None
         if self.cfg.remote_save_folder is not None:
             remote_checkpoint_dir = f"{self.cfg.remote_save_folder.rstrip('/')}/{checkpoint_dir.name}"
@@ -487,6 +498,21 @@ class Trainer:
                 self.trainer_state_dict(),
                 upload_to=remote_checkpoint_dir,
             )
+
+            gs_path = get_project_config().GS_PATH
+            rel_path = get_relpath()
+
+
+
+            if (gs_path != None and rel_path != None):
+                remote_path = os.path.join(gs_path, rel_path, checkpoint_name)
+                print(f'Remote Path: {remote_path}')
+
+                if get_global_rank() == 0:
+                    upload_to_gs(checkpoint_dir, remote_path, directory=True, concurrent = True, ensure_contents=True,retry=3 )
+                barrier()
+                
+
         except FileExistsError:
             raise OLMoConfigurationError(
                 f"Checkpoint for step {self.global_step} already exists, use --save_overwrite to overwrite it"
@@ -518,15 +544,15 @@ class Trainer:
         else:
             return checkpoint_dir, None
 
-    def save_sharded_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_sharded_checkpoint(self, is_final: bool = False) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         checkpointer = build_sharded_checkpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.sharded)
+        result = self._save_checkpoint(checkpointer, CheckpointType.sharded, is_final=is_final)
         self.last_sharded_checkpoint_step = self.global_step
         return result
 
-    def save_ephemeral_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_ephemeral_checkpoint(self, is_final: bool = False) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         checkpointer = build_sharded_checkpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.sharded_ephemeral)
+        result = self._save_checkpoint(checkpointer, CheckpointType.sharded_ephemeral, is_final=is_final)
         self.last_sharded_checkpoint_step = self.global_step
         return result
 
@@ -569,9 +595,9 @@ class Trainer:
             self.load_trainer_state_dict(trainer_state)
         barrier()
 
-    def save_unsharded_checkpoint(self) -> Tuple[PathOrStr, Optional[PathOrStr]]:
+    def save_unsharded_checkpoint(self, is_final: bool = False) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         checkpointer = FullCheckpointer(self.cfg)
-        result = self._save_checkpoint(checkpointer, CheckpointType.unsharded)
+        result = self._save_checkpoint(checkpointer, CheckpointType.unsharded, is_final=is_final)
         self.last_unsharded_checkpoint_step = self.global_step
         return result
 
@@ -608,15 +634,15 @@ class Trainer:
         barrier()
 
     def save_checkpoint(
-        self, checkpoint_type: CheckpointType = CheckpointType.sharded
+        self, checkpoint_type: CheckpointType = CheckpointType.sharded, is_final: bool = False
     ) -> Tuple[PathOrStr, Optional[PathOrStr]]:
         result: Tuple[PathOrStr, Optional[PathOrStr]]
         if checkpoint_type == CheckpointType.sharded:
-            result = self.save_sharded_checkpoint()
+            result = self.save_sharded_checkpoint(is_final=is_final)
         elif checkpoint_type == CheckpointType.unsharded:
-            result = self.save_unsharded_checkpoint()
+            result = self.save_unsharded_checkpoint(is_final=is_final)
         elif checkpoint_type == CheckpointType.sharded_ephemeral:
-            result = self.save_ephemeral_checkpoint()
+            result = self.save_ephemeral_checkpoint(is_final=is_final)
         else:
             raise NotImplementedError(checkpoint_type)
 
@@ -779,7 +805,7 @@ class Trainer:
 
         return loss, ce_loss, z_loss
 
-    def train_batch(self, batch: Dict[str, Any]) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def train_batch(self, batch: Dict[str, Any], is_sam: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # Split into micro-batches.
         micro_batches = self.split_batch(batch)
         batch_size_in_tokens = batch["input_ids"].numel()
@@ -799,7 +825,7 @@ class Trainer:
                 and self.cfg.ddp is not None
                 and self.cfg.ddp.grad_sync_mode == DDPGradSyncMode.batch
             ):
-                if micro_batch_idx != num_micro_batches - 1:
+                if micro_batch_idx != num_micro_batches - 1 or is_sam:
                     grad_sync_context = self.dist_model.no_sync
 
             # Register output hooks
@@ -848,7 +874,19 @@ class Trainer:
         batch = move_to_device(batch, self.device)
 
         # Run forward-backward pass.
-        ce_batch_loss, z_batch_loss = self.train_batch(batch)
+        ce_batch_loss_sam = None
+        z_batch_loss_sam = None
+
+        if isinstance(self.optim, SAM):
+            new_rho = self.cfg.optimizer.sam_rho
+            logging.info(f"Sam rho: {new_rho}")
+
+            ce_batch_loss, z_batch_loss = self.train_batch(batch, is_sam=True)
+            self.optim.first_step(zero_grad=True, rho=new_rho)
+            ce_batch_loss_sam, z_batch_loss_sam = self.train_batch(batch)
+            self.optim.restore_original_params()
+        else:
+            ce_batch_loss, z_batch_loss = self.train_batch(batch)
 
         # Collect loss, potentially reducing over all ranks.
         if reduce_global_loss:
@@ -857,6 +895,12 @@ class Trainer:
             if z_batch_loss is not None:
                 dist.reduce(z_batch_loss, 0)
                 z_batch_loss.div_(get_world_size())
+            if ce_batch_loss_sam is not None:
+                dist.reduce(ce_batch_loss_sam, 0)
+                ce_batch_loss_sam.div_(get_world_size())
+            if z_batch_loss_sam is not None:
+                dist.reduce(z_batch_loss_sam, 0)
+                z_batch_loss_sam.div_(get_world_size())
 
         # Clip gradient norms and collect param/gradient/optim metrics.
         should_log_optim_metrics_this_step = self.should_log_optim_metrics_this_step()
@@ -900,6 +944,11 @@ class Trainer:
         metrics["train/Perplexity"] = math.exp(self.cur_train_loss)
         if z_batch_loss is not None:
             metrics["train/ZLoss"] = z_batch_loss.item()
+        if ce_batch_loss_sam is not None:
+            metrics["train/CrossEntropyLoss_SAM"] = ce_batch_loss_sam.item()
+            metrics["train/Perplexity_SAM"] = math.exp(ce_batch_loss_sam.item())
+        if z_batch_loss_sam is not None:
+            metrics["train/ZLoss_SAM"] = z_batch_loss_sam.item()
 
         # Maybe collect post-step optimizer-specific metrics.
         if should_log_optim_metrics_this_step:
@@ -963,10 +1012,18 @@ class Trainer:
 
     def log_metrics_to_console(self, prefix: str, metrics: Dict[str, float]):
         def format_float(value: float) -> str:
+            if math.isnan(value):
+                return "nan"
+            if math.isinf(value):
+                return "inf"
+
             if value < 0.0001:
                 return str(value)  # scientific notation
             elif value > 1000:
-                return f"{int(value):,d}"
+                try:
+                    return f"{int(value):,d}"
+                except (OverflowError, ValueError):
+                    return f"{value:.1e}" 
             elif value > 100:
                 return f"{value:.1f}"
             elif value > 10:
@@ -1276,6 +1333,10 @@ class Trainer:
                             while self.ephemeral_checkpoints:
                                 self.remove_ephemeral_checkpoint()
 
+                            # if self.cfg.run_sync_cmd:
+                            #     log.info("Running SYNC_CMD...")
+                            #     run_sync_cmd()
+
                             # Reset speed monitor so that we don't count the time taken to save checkpoints.
                             speed_monitor.reset()
 
@@ -1304,6 +1365,10 @@ class Trainer:
                         log.info("Saving unsharded checkpoint...")
                         checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
                         log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
+
+                        # if self.cfg.run_sync_cmd:
+                        #     log.info("Running SYNC_CMD...")
+                        #     run_sync_cmd()
 
                         # Reset speed monitor so that we don't count the time taken to save checkpoints.
                         speed_monitor.reset()
@@ -1364,7 +1429,7 @@ class Trainer:
                 and self.last_unsharded_checkpoint_step != self.global_step
             ):
                 log.info("Saving final unsharded model checkpoint...")
-                checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded)
+                checkpoint_path, _ = self.save_checkpoint(CheckpointType.unsharded, is_final=True)
                 log.info(f"Unsharded checkpoint saved to {checkpoint_path}")
             elif (
                 self.cfg.save_num_checkpoints_to_keep != 0
@@ -1372,7 +1437,7 @@ class Trainer:
                 and self.cfg.distributed_strategy == DistributedStrategy.fsdp
             ):
                 log.info("Saving final checkpoint...")
-                checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded)
+                checkpoint_path, _ = self.save_checkpoint(CheckpointType.sharded, is_final=True)
                 log.info(f"Checkpoint saved to {checkpoint_path}")
 
     def close(self, exit_code: int = 0) -> None:

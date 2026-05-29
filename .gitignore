@@ -55,3 +55,6 @@ site/
 /wandb/
 /scratch/
 core
+/workspace/
+/logs/
+/results/

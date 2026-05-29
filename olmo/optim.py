@@ -19,6 +19,8 @@ __all__ = [
     "Optimizer",
     "LionW",
     "AdamW",
+    "SGD",
+    "SAM",
     "Scheduler",
     "CosWithWarmup",
     "LinearWithWarmup",
@@ -29,6 +31,7 @@ __all__ = [
     "BoltOnWarmupScheduler",
     "build_optimizer",
     "build_scheduler",
+    "WSD",
 ]
 
 
@@ -110,14 +113,14 @@ class Optimizer(OptimizerBase):
                     if x is not None and x.numel() > 0:
                         if collect_param_metrics:
                             x_abs = x.abs()
-                            per_param_min_metrics.append(x_abs.min().unsqueeze(0).to(dtype=torch.float32))
-                            per_param_max_metrics.append(x_abs.max().unsqueeze(0).to(dtype=torch.float32))
-                            per_param_sum_metrics.append(x.sum().unsqueeze(0).to(dtype=torch.float32))
+                            per_param_min_metrics.append(x_abs.min().unsqueeze(0).to(device=device, dtype=torch.float32))
+                            per_param_max_metrics.append(x_abs.max().unsqueeze(0).to(device=device, dtype=torch.float32))
+                            per_param_sum_metrics.append(x.sum().unsqueeze(0).to(device=device, dtype=torch.float32))
                             per_param_numel_metrics.append(
                                 torch.tensor([x.numel()], device=device, dtype=torch.float32)
                             )
                         per_param_norm_metrics.append(
-                            torch.linalg.vector_norm(x, 2.0, dtype=torch.float32).unsqueeze(0)
+                            torch.linalg.vector_norm(x, 2.0, dtype=torch.float32).unsqueeze(0).to(device)
                         )
                     else:
                         if collect_param_metrics:
@@ -647,6 +650,213 @@ class AdamW(torch.optim.AdamW, Optimizer):
             return metrics
 
 
+class SGD(torch.optim.SGD, Optimizer):
+    def __init__(self, *args, record_update_metrics: bool = False, selective_updates: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._record_update_metrics = record_update_metrics
+        self._collecting_metrics = False
+
+        # Buffers for metrics
+        self._step_size_param_names: Optional[List[str]] = None
+        self._step_size_norms: Optional[List[torch.Tensor]] = None
+        self._step_size_maxs: Optional[List[torch.Tensor]] = None
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        if not (self._record_update_metrics and self._collecting_metrics) and not self._selective_updates:
+            return super().step(closure=closure)
+
+        param_names = []
+        step_size_norms = []
+        step_size_maxs = []
+
+        for group in self.param_groups:
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+
+            for name, param in zip(group.get("param_names", []), group["params"]):
+                param_names.append(name)
+                grad = param.grad
+                if grad is None:
+                    step_size_norms.append(torch.tensor([0.0], device=param.device))
+                    step_size_maxs.append(torch.tensor([0.0], device=param.device))
+                    continue
+
+                # Perform step weight decay.
+                if self._selective_updates:
+                    mask: Union[torch.Tensor, int] = grad != 0
+                else:
+                    mask = 1
+
+                # Apply weight decay only to selected elements if selective_updates is enabled
+                if isinstance(mask, torch.Tensor):
+                    # Only decay weights where mask is True
+                    param.mul_(1 - mask * (lr * weight_decay))
+                else:
+                    param.mul_(1 - lr * weight_decay)
+
+                update = -lr * grad
+
+                if isinstance(mask, torch.Tensor):
+                    # Only update selected elements
+                    update = update * mask
+
+                param.add_(update)
+                step_size_norms.append(torch.linalg.vector_norm(update, 2.0, dtype=torch.float32).unsqueeze(0))
+                step_size_maxs.append(update.abs().max().unsqueeze(0))
+
+        self._step_size_param_names = param_names
+        self._step_size_norms = step_size_norms
+        self._step_size_maxs = step_size_maxs
+
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        if not (self._record_update_metrics and self._collecting_metrics):
+            return {}
+        else:
+            device = get_default_device()
+            dst_rank = 0
+            if process_group is not None:
+                dst_rank = dist.get_global_rank(process_group, 0)
+            param_names = self._step_size_param_names
+            step_size_norms = self._step_size_norms
+            step_size_maxs = self._step_size_maxs
+            assert param_names is not None
+            assert step_size_norms is not None
+            assert step_size_maxs is not None
+
+            # Reduce metrics if needed.
+            if is_distributed() and isinstance(module, FullyShardedDataParallel):
+                # Reduce norms.
+                all_norms = torch.cat(step_size_norms).to(device) ** 2.0
+                dist.reduce(all_norms, dst_rank, op=dist.ReduceOp.SUM, group=process_group)
+                step_size_norms = (all_norms ** (0.5)).squeeze(0).split(1)
+
+                # Reduce maxs.
+                all_maxs = torch.cat(step_size_maxs).to(device)
+                dist.reduce(all_maxs, dst_rank, op=dist.ReduceOp.MAX, group=process_group)
+                step_size_maxs = all_maxs.split(1)
+
+            metrics = {}
+            for param_name, step_size_norm, step_size_max in zip(param_names, step_size_norms, step_size_maxs):  # type: ignore[arg-type]
+                metrics[f"step/{param_name}.norm"] = step_size_norm.squeeze(0)
+                metrics[f"step/{param_name}.max"] = step_size_max.squeeze(0)
+
+            self._step_size_param_names = None
+            self._step_size_norms = None
+            self._step_size_maxs = None
+            return metrics
+
+
+class SAM(Optimizer):
+    """Sharpness-Aware Minimization wrapper.
+
+    Refactored to:
+    - Use raw (unclipped) gradient norm for perturbation scaling (canonical SAM).
+    - Store perturbation vectors instead of cloning full parameters (memory efficient).
+    - Skip perturbation when gradient norm is zero / NaN / Inf.
+    - Avoid invoking full metric + clipping pipeline before perturbation.
+    """
+
+    def __init__(self, base_optimizer: Optimizer, rho: float = 0.05):
+        assert rho >= 0.0, f"Invalid rho, should be non-negative: {rho}"
+
+        # Initialize parent Optimizer to set up optimizer hook dictionaries used by
+        # state_dict()/load_state_dict() (e.g., _optimizer_state_dict_pre_hooks).
+        # We pass the base optimizer's param_groups and an empty defaults dict since
+        # SAM delegates stepping to base_optimizer. We'll share state with base_optimizer.
+        super().__init__(
+            base_optimizer.param_groups,
+            {},
+            record_update_metrics=getattr(base_optimizer, "_record_update_metrics", False),
+            selective_updates=getattr(base_optimizer, "_selective_updates", False),
+        )
+
+        # Store reference to base optimizer and share its state and param_groups.
+        # This ensures SAM and base_optimizer use the same state dict, so all optimizer
+        # state (e.g., AdamW's exp_avg, exp_avg_sq) is properly tracked.
+        self.base_optimizer = base_optimizer
+        # Override the state dict created by parent to use base_optimizer's state
+        # (which already contains all the optimizer state from previous steps)
+        self.state = self.base_optimizer.state
+        # Ensure param_groups reference matches (should already be the same object)
+        self.param_groups = self.base_optimizer.param_groups
+        self._rho = rho
+
+    def _grad_norm(self) -> torch.Tensor:
+        device = get_default_device()
+        total = torch.zeros(1, device=device, dtype=torch.float32)
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                total += p.grad.detach().to(dtype=torch.float32).pow(2).sum()
+        return total.sqrt()
+
+    @torch.no_grad()
+    def first_step(self, zero_grad: bool = False, rho: float = 0.05):
+        grad_norm = self._grad_norm()
+        if not torch.isfinite(grad_norm):
+            return
+        scale = rho / (grad_norm + 1e-12)
+        for group in self.param_groups:
+            for param in group["params"]:
+                grad = param.grad
+                if grad is None:
+                    continue
+                e_w = grad * scale
+                param.add_(e_w)
+                self.state[param]["_sam_perturb"] = e_w
+        if zero_grad:
+            self.zero_grad()
+
+    @torch.no_grad()
+    def restore_original_params(self):
+        for group in self.param_groups:
+            for param in group["params"]:
+                pert = self.state[param].pop("_sam_perturb", None)
+                if pert is not None:
+                    param.sub_(pert)  # subtract perturbation if there is one
+
+    def zero_grad(self, set_to_none: bool = False) -> None:
+        self.base_optimizer.zero_grad(set_to_none=set_to_none)
+
+    @torch.no_grad()
+    def step(self, closure=None) -> None:
+        self.base_optimizer.step(closure=closure)
+
+    def state_dict(self):
+        """Return the state dict of the base optimizer, which contains the actual optimizer state."""
+        return self.base_optimizer.state_dict()
+
+    def load_state_dict(self, state_dict):
+        """Load state dict into the base optimizer."""
+        self.base_optimizer.load_state_dict(state_dict)
+        # Sync param_groups after loading to ensure consistency
+        self.param_groups = self.base_optimizer.param_groups
+        self.state = self.base_optimizer.state
+
+    def get_state_for_param(self, param: nn.Parameter) -> Dict[str, Optional[torch.Tensor]]:
+        """Return optimizer state for a parameter by delegating to the base optimizer.
+        
+        This ensures that metrics collection (e.g., in clip_grads_and_collect_metrics)
+        can properly collect state metrics from the base optimizer (e.g., AdamW's exp_avg, exp_avg_sq).
+        """
+        if hasattr(self.base_optimizer, "get_state_for_param"):
+            return self.base_optimizer.get_state_for_param(param)
+        # Fallback to base class implementation if base optimizer doesn't have this method
+        return super().get_state_for_param(param)
+
+    def get_post_step_metrics(
+        self, module: nn.Module, process_group: Optional[dist.ProcessGroup] = None
+    ) -> Dict[str, torch.Tensor]:
+        if hasattr(self.base_optimizer, "get_post_step_metrics"):
+            return self.base_optimizer.get_post_step_metrics(module, process_group)
+        return {}
+
+
 @dataclass
 class Scheduler(metaclass=ABCMeta):
     # NOTE: these fields are not given default values because otherwise dataclasses complains
@@ -725,6 +935,28 @@ class LinearWithWarmup(Scheduler):
         else:
             step = step - self.warmup_steps
             max_steps = max_steps - self.warmup_steps
+            return initial_lr - (initial_lr - eta_min) * (step / max_steps)
+
+@dataclass
+class WSD(Scheduler):
+    warmup_steps: int
+    anneal_begin: int
+    alpha_f: float = 0.1
+    t_max: Optional[int] = None
+
+
+    def get_lr(self, initial_lr: float, step: int, max_steps: int) -> float:
+        max_steps = max_steps if self.t_max is None else self.t_max
+        eta_min = initial_lr * self.alpha_f
+        if step < self.warmup_steps:
+            return self._linear_warmup(initial_lr, step, self.warmup_steps)
+        elif step >= max_steps:
+            return eta_min
+        elif step < self.anneal_begin:
+            return initial_lr
+        else:
+            step = step - self.anneal_begin
+            max_steps = max_steps - self.anneal_begin
             return initial_lr - (initial_lr - eta_min) * (step / max_steps)
 
 
@@ -907,7 +1139,6 @@ def get_param_groups(cfg: TrainConfig, model: nn.Module) -> List[Dict[str, Any]]
 
     return param_groups
 
-
 def fix_optim_state_dict(optimizer: Optimizer, state_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Make sure old optim state dicts are compatible with new versions.
@@ -942,6 +1173,7 @@ def fix_optim_state_dict(optimizer: Optimizer, state_dict: Dict[str, Any]) -> Di
 def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
     param_groups = get_param_groups(cfg, model)
     log.info(f"Constructing optimizer with {len(param_groups)} param groups")
+    log.info(f"Constructing optimizer with name {cfg.optimizer.name}")
     if cfg.optimizer.name == OptimizerType.lionw:
         return LionW(
             param_groups,
@@ -961,6 +1193,41 @@ def build_optimizer(cfg: TrainConfig, model: nn.Module) -> Optimizer:
             selective_updates=cfg.optimizer.selective_updates,
             eps=cfg.optimizer.eps,
         )
+    elif cfg.optimizer.name == OptimizerType.sgd:
+        return SGD(
+            param_groups,
+            lr=cfg.optimizer.learning_rate,
+            weight_decay=cfg.optimizer.weight_decay,
+            momentum=cfg.optimizer.momentum,
+            record_update_metrics=cfg.optimizer.record_update_metrics,
+            selective_updates=cfg.optimizer.selective_updates,
+        )
+    elif cfg.optimizer.name == OptimizerType.sam:
+        if cfg.optimizer.sam_base_optimizer == 'sgd':
+            return SAM(
+            base_optimizer=SGD(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                momentum=cfg.optimizer.momentum,
+                weight_decay=cfg.optimizer.weight_decay,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+            ),
+            rho=cfg.optimizer.sam_rho,
+        )
+        elif cfg.optimizer.sam_base_optimizer == 'adamw':
+            return SAM(
+            base_optimizer=AdamW(
+                param_groups,
+                lr=cfg.optimizer.learning_rate,
+                betas=cfg.optimizer.betas,
+                weight_decay=cfg.optimizer.weight_decay,
+                record_update_metrics=cfg.optimizer.record_update_metrics,
+                selective_updates=cfg.optimizer.selective_updates,
+                eps=cfg.optimizer.eps,
+            ),
+            rho=cfg.optimizer.sam_rho,
+    )
     else:
         raise NotImplementedError
 
@@ -1035,6 +1302,18 @@ def build_scheduler(cfg: TrainConfig, sched_cfg: Optional[SchedulerConfig] = Non
             grad_clip_warmup_factor=sched_cfg.grad_clip_warmup_factor,
             warmup_min_lr=sched_cfg.warmup_min_lr,
             warmup_steps=int(sched_cfg.t_warmup),
+        )
+    elif sched_cfg.name == SchedulerType.wsd:
+        return WSD(
+            grad_clip_warmup_steps=(
+                None if sched_cfg.grad_clip_warmup_steps is None else int(sched_cfg.grad_clip_warmup_steps)
+            ),
+            grad_clip_warmup_factor=sched_cfg.grad_clip_warmup_factor,
+            warmup_min_lr=sched_cfg.warmup_min_lr,
+            warmup_steps=int(sched_cfg.t_warmup),
+            alpha_f=sched_cfg.alpha_f,
+            t_max=None if sched_cfg.t_max is None else int(sched_cfg.t_max),
+            anneal_begin=int(sched_cfg.anneal_begin),
         )
     else:
         raise NotImplementedError

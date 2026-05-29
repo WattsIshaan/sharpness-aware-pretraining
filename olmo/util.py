@@ -4,9 +4,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import sys
 import time
+import subprocess
 import warnings
 from datetime import datetime
 from enum import Enum
@@ -361,6 +363,8 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False):
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
     elif parsed.scheme in ("s3", "r2", "weka"):
         _s3_upload(source, parsed.scheme, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
+    elif parsed.scheme in (""):
+        _file_upload(source, target, save_overwrite=save_overwrite)
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
 
@@ -388,6 +392,58 @@ def get_bytes_range(source: PathOrStr, bytes_start: int, num_bytes: int) -> byte
         with open(source, "rb") as f:
             f.seek(bytes_start)
             return f.read(num_bytes)
+
+
+def run_sync_cmd(timeout: Optional[float] = None, max_retries: int = 3, retry_wait: float = 3.0) -> None:
+    """
+    If the environment variable SYNC_CMD is set (non-empty), run it as a shell command.
+    Retries the command up to `max_retries` times if it fails.
+
+    :param timeout: Optional timeout (in seconds) for the command execution.
+    :param max_retries: Number of times to retry the command on failure.
+    :param retry_wait: Seconds to wait between retries.
+    :raises OLMoCliError: if the command fails to execute or exits with a non-zero status.
+    """
+
+    cmd = os.environ.get("SYNC_CMD")
+    if not cmd:
+        return
+
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        log.info("Running SYNC_CMD: %s (attempt %d/%d)", cmd, attempt, max_retries)
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.stdout:
+                for line in result.stdout.rstrip().splitlines():
+                    log.info(line)
+            if result.stderr:
+                for line in result.stderr.rstrip().splitlines():
+                    log.warning(line)
+            # Success, so exit early
+            return
+        except subprocess.CalledProcessError as e:
+            msg = f"SYNC_CMD failed with exit code {e.returncode}"
+            if e.stdout:
+                msg += f"\nstdout:\n{e.stdout}"
+            if e.stderr:
+                msg += f"\nstderr:\n{e.stderr}"
+            last_exception = OLMoCliError(msg)
+        except (OSError, ValueError) as e:
+            last_exception = OLMoCliError(f"Failed to execute SYNC_CMD: {e}")
+        if attempt < max_retries:
+            log.warning("SYNC_CMD failed (attempt %d/%d), retrying in %.1f seconds...", attempt, max_retries, retry_wait)
+            time.sleep(retry_wait)
+    # All attempts failed, raise last exception
+    if last_exception:
+        raise last_exception
 
 
 def find_latest_checkpoint(dir: PathOrStr) -> Optional[PathOrStr]:
@@ -577,6 +633,22 @@ def _get_s3_client(scheme: str):
 
 def _wait_before_retry(attempt: int):
     time.sleep(min(0.5 * 2**attempt, 3.0))
+
+
+def _file_upload(
+    source: Path, target: str, save_overwrite: bool = False
+):
+    target_path = Path(target)
+
+    if not save_overwrite and target_path.exists():
+        raise FileExistsError(f"{target} already exists. Use save_overwrite to overwrite it.")
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.copyfile(source, target)
+    except:
+        raise OLMoNetworkError(f"Failed to upload to {target}")
 
 
 def _s3_upload(

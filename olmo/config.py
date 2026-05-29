@@ -499,6 +499,8 @@ class ModelConfig(BaseConfig):
 class OptimizerType(StrEnum):
     lionw = "lionw"
     adamw = "adamw"
+    sgd = "sgd"
+    sam = "sam"
 
 
 @dataclass
@@ -508,6 +510,9 @@ class OptimizerConfig(BaseConfig):
     weight_decay: float = 0.01
     betas: Tuple[float, float] = (0.9, 0.95)
     eps: float = 1e-5
+    sam_rho: float = 0.05
+    momentum: float = 0.9
+    sam_base_optimizer: str = 'adamw'
 
     no_decay_norm_and_bias: Optional[bool] = None
     """
@@ -559,6 +564,7 @@ class SchedulerType(StrEnum):
     constant = "constant"
     cosine_linear_envelope = "cosine_linear_envelope"
     constant_with_warmup = "constant_with_warmup"
+    wsd = "wsd"
 
 
 class SchedulerUnits(StrEnum):
@@ -573,7 +579,7 @@ class SchedulerConfig(BaseConfig):
     t_warmup: Union[int, float] = 100
     t_max: Optional[Union[int, float]] = None
     alpha_f: float = 0.1
-
+    anneal_begin: Optional[int] = None
     grad_clip_warmup_steps: Optional[Union[int, float]] = None
     """
     The warmup period for which the max grad norm (or norm ratio) will be set to its
@@ -698,6 +704,8 @@ class WandbConfig(BaseConfig):
     log_artifacts: bool = False
     rank_zero_only: bool = True
     log_interval: int = 1
+    id: Optional[str] = None
+    resume: Optional[str] = None
 
 
 @dataclass
@@ -1084,6 +1092,11 @@ class TrainConfig(BaseConfig):
     Skip saving pre-train checkpoint.
     """
 
+    run_sync_cmd: Optional[bool] = False
+    """
+    If ``True``, run the SYNC_CMD environment variable as a shell command.
+    """
+
     load_path: Optional[str] = None
     """
     The path to a training checkpoint to restore/resume from. If not set, then training begins from scratch.
@@ -1312,6 +1325,29 @@ class TrainConfig(BaseConfig):
     """
     Outputs of model submodules are saved during the provided steps. Submodule outputs
     can be compared using `scripts/compare_module_outputs.py`.
+    """
+
+    ewc_lambda: Optional[float] = None
+    """
+    If set, use Elastic Weight Consolidation (see ``scripts/train_ewc.py``): adds
+    ``(λ/2) Σ_i F_i (θ_i - θ*_i)²`` to the loss, where ``F`` is the diagonal Fisher
+    at the loaded checkpoint and ``θ*`` are those checkpoint weights.
+    """
+
+    ewc_fisher_batches: int = 100
+    """
+    Number of training batches used to estimate the diagonal Fisher matrix for EWC.
+    """
+
+    ewc_fisher_paths: Optional[List[str]] = None
+    """
+    If set, the Fisher diagonal is estimated from these memmap paths (e.g. a subsample of pretrain
+    **training** shards) instead of the SFT training ``data.paths``. Must match tokenizer / dtype.
+    """
+
+    ewc_fisher_label_mask_paths: Optional[List[str]] = None
+    """
+    Optional label-mask memmap paths paired 1:1 with ``ewc_fisher_paths`` (same semantics as training data).
     """
 
     @property

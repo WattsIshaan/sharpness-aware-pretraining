@@ -1,4 +1,9 @@
-"""Run this script with 'torchrun'."""
+"""Elastic Weight Consolidation (EWC) finetuning — run with ``torchrun``.
+
+Requires ``ewc_lambda`` and ``ewc_fisher_batches`` in the config (see ``TrainConfig``).
+``load_path`` must point to the pretrained checkpoint (``θ*``); Fisher is estimated
+before training without consuming the main training dataloader.
+"""
 
 import gzip
 import logging
@@ -39,7 +44,7 @@ from olmo.torch_util import (
     peak_gpu_memory,
     seed_all,
 )
-from olmo.train import Trainer
+from olmo.ewc_trainer import EWCTrainer
 from olmo.util import (
     add_cached_path_clients,
     clean_opt,
@@ -48,13 +53,15 @@ from olmo.util import (
     prepare_cli_environment,
 )
 
-log = logging.getLogger("train")
+log = logging.getLogger("train_ewc")
 
 
 def main(cfg: TrainConfig) -> None:
     # Ensure run name set.
     if cfg.run_name is None:
         raise OLMoConfigurationError("--run_name is required")
+    if cfg.ewc_lambda is None:
+        raise OLMoConfigurationError("--ewc_lambda is required for EWC training (scripts/train_ewc.py)")
     log_extra_field("run_name", cfg.run_name)
 
     # Sanity check
@@ -252,8 +259,8 @@ def main(cfg: TrainConfig) -> None:
         indices_file_path.parent.mkdir(exist_ok=True, parents=True)
         indices_file = gzip.open(indices_file_path, "wt")
 
-    # Consolidate components into `Trainer` object.
-    with Trainer(
+    # Consolidate components into `EWCTrainer` object.
+    with EWCTrainer(
         cfg=cfg,
         epoch=cfg.epoch,
         model=olmo_model,
@@ -371,6 +378,13 @@ def main(cfg: TrainConfig) -> None:
                     trainer.global_step,
                     int(trainer.global_step + cfg.scheduler.t_warmup),
                 )
+
+        if cfg.ewc_lambda is not None and not cfg.dry_run:
+            if cfg.load_path is None:
+                raise OLMoConfigurationError(
+                    "EWC requires a checkpoint to anchor to; set load_path (or resolve via try_load_latest_save)."
+                )
+            trainer.prepare_ewc()
 
         if cfg.force_save_unsharded and cfg.distributed_strategy != DistributedStrategy.ddp:
             log.info("Saving unsharded checkpoint...")
